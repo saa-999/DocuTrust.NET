@@ -1,0 +1,38 @@
+DocuTrust.NET - THIRD-PARTY-NOTICES.txt
+
+This software bundles or depends on the following third-party libraries:
+
+1. UglyToad.PdfPig
+   Author: UglyToad
+   License: Apache License 2.0
+   Full Text: https://github.com/UglyToad/PdfPig/blob/master/LICENSE
+
+2. DocumentFormat.OpenXml
+   Author: Microsoft Corporation
+   License: MIT License
+   Full Text: https://github.com/dotnet/Open-XML-SDK/blob/main/LICENSE.txt
+
+3. FileSignatures
+   Author: Neil Harvey
+   License: MIT License
+   Full Text: https://github.com/neilharvey/FileSignatures/blob/master/LICENSE
+
+---
+
+UglyToad.PdfPig (Apache 2.0)
+-------------------------------------------------------------------------------
+Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+(Standard Apache 2.0 text abbreviated for brevity, link provided above)
+
+DocumentFormat.OpenXml (MIT)
+-------------------------------------------------------------------------------
+Copyright (c) Microsoft Corporation. All rights reserved.
+Licensed under the MIT License.
+
+FileSignatures (MIT)
+-------------------------------------------------------------------------------
+Copyright (c) Neil Harvey. All rights reserved.
+Licensed under the MIT License.

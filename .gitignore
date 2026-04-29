@@ -1,0 +1,26 @@
+# Build artifacts
+bin/
+obj/
+
+# IDE files
+.vs/
+*.user
+*.suo
+*.sln.doccache
+.idea/
+
+# Secrets and config
+appsettings.Development.json
+*.pfx
+*.key
+secrets.json
+
+# NuGet
+*.nupkg
+*.snupkg
+packages/
+node_modules/
+
+# OS files
+Thumbs.db
+.DS_Store
