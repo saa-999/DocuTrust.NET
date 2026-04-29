@@ -1,9 +1,8 @@
-
 # DocuTrust.NET 🛡️
 **Accelerate your .NET file handling with confidence.**
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/e7a6dc47-ab26-41e7-b3cf-ab805e570631" width="150" alt="DocuTrust.NET Rounded Logo" />
+  <img src="https://github.com/user-attachments/assets/e7a6dc47-ab26-41e7-b3cf-ab805e570631" width="400" alt="DocuTrust.NET Logo" />
 </p>
 
 <p align="center">
