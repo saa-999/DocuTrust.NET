@@ -1,12 +1,20 @@
+
 # DocuTrust.NET 🛡️
-### Accelerate your .NET file handling with confidence.
+**Accelerate your .NET file handling with confidence.**
 
 <p align="center">
-  <img src="src/DocuTrust/DocuTrust/Header DocuTrust 2.webp" width="600" alt="DocuTrust.NET Logo" />
+  <img src="https://github.com/user-attachments/assets/e7a6dc47-ab26-41e7-b3cf-ab805e570631" width="400" alt="DocuTrust.NET Logo" />
 </p>
-![License](https://img.shields.io/badge/License-Attribution%201.0-blue.svg)
-![.NET Version](https://img.shields.io/badge/.NET-8.0-purple.svg)
-[![NuGet](https://img.shields.io/nuget/v/DocuTrust.NET.svg)](https://www.nuget.org/packages/DocuTrust.NET/)
+
+<p align="center">
+  <img src="https://img.shields.io/badge/License-Attribution%201.0-blue.svg" alt="License">
+  <img src="https://img.shields.io/badge/.NET-8.0-purple.svg" alt=".NET Version">
+  <a href="https://www.nuget.org/packages/DocuTrust.NET/">
+    <img src="https://img.shields.io/nuget/v/DocuTrust.NET.svg" alt="NuGet">
+  </a>
+</p>
+
+---
 
 ## Why DocuTrust.NET?
 
