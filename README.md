@@ -74,11 +74,7 @@ Full license details can be found in the `THIRD-PARTY-NOTICES.txt` file included
 - [API Reference](docs/api-reference.md)
 - [Design Philosophy](docs/why-docutrust.md)
 
-## Dependencies
 
-- [UglyToad.PdfPig](https://github.com/UglyToad/PdfPig)
-- [DocumentFormat.OpenXml](https://github.com/dotnet/Open-XML-SDK)
-- [FileSignatures](https://github.com/neilharvey/FileSignatures)
 
 ## License
 
