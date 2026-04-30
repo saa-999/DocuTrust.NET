@@ -57,6 +57,16 @@ public class MyService(IDocuTrustFileValidator validator)
 }
 ```
 
+## Dependencies
+
+DocuTrust.NET relies on the following open-source libraries under the hood. Big thanks to the authors for their work:
+
+* [**PdfPig**](https://github.com/UglyToad/PdfPig) - For parsing and analyzing PDF structures. (Apache-2.0)
+* [**DocumentFormat.OpenXml**](https://github.com/dotnet/Open-XML-SDK) - For handling Office documents. (MIT)
+* [**FileSignatures**](https://github.com/neilharvey/FileSignatures) - For magic byte validation. (MIT)
+
+Full license details can be found in the `THIRD-PARTY-NOTICES.txt` file included in this repository.
+
 ## Documentation
 
 - [Getting Started](docs/getting-started.md)
