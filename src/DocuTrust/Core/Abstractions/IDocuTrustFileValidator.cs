@@ -13,29 +13,33 @@ public interface IDocuTrustFileValidator
     /// </summary>
     /// <param name="filePath">Full path to the file.</param>
     /// <param name="expectedExtension">What extension we're expecting (e.g., ".pdf").</param>
+    /// <param name="token">Cancellation token for async operations.</param>
     /// <returns>Validation result including MIME type and extension matches.</returns>
-    Task<DocuTrustValidationResult> ValidateFilePathAsync(string filePath, string expectedExtension);
+    Task<DocuTrustValidationResult> ValidateFilePathAsync(string filePath, string expectedExtension , CancellationToken token = default );
 
     /// <summary>
     /// Validates a raw stream of data.
     /// </summary>
     /// <param name="fileStream">The stream to check.</param>
     /// <param name="expectedExtension">What it's supposed to be.</param>
+    /// <param name="token">Cancellation token for async operations.</param>
     /// <returns>Validation result.</returns>
-    Task<DocuTrustValidationResult> ValidateFileStreamAsync(Stream fileStream, string expectedExtension);
+    Task<DocuTrustValidationResult> ValidateFileStreamAsync(Stream fileStream, string expectedExtension , CancellationToken token = default);
 
     /// <summary>
     /// Tries to figure out what a file actually is by looking at its signature.
     /// </summary>
     /// <param name="filePath">Path to the file.</param>
+    /// <param name="token">Cancellation token for async operations.</param>
     /// <returns>Information about the detected file type.</returns>
-    Task<DocuTrustValidationResult> GetFileTypeAsync(string filePath);
+    Task<DocuTrustValidationResult> GetFileTypeAsync(string filePath , CancellationToken token = default);
 
     /// <summary>
     /// Validates an IFormFile (typically from an ASP.NET Core upload).
     /// </summary>
     /// <param name="file">The uploaded file.</param>
     /// <param name="expectedExtension">Expected extension.</param>
+    /// <param name="token">Cancellation token for async operations.</param>
     /// <returns>Validation result.</returns>
-    Task<DocuTrustValidationResult> ValidateFileAsync(IFormFile file, string expectedExtension);
+    Task<DocuTrustValidationResult> ValidateFileAsync(IFormFile file, string expectedExtension , CancellationToken token = default);
 }
