@@ -11,20 +11,18 @@ using DocuTrust.Exceptions;
 
 namespace DocuTrust.Core.Services;
 
-/// <summary>
-/// Advanced PDF scanner that looks for more than just text. It performs behavioral analysis to spot hidden scripts and malicious structures.
-/// </summary>
 internal class DocuTrustPdfScanner : IDocuTrustContentFile
 {
-    private const long MaxPdfSizeBytes = 150 * 1024 * 1024; // 150 MB
-    private const long MaxEmbeddedStreamSize = 25 * 1024 * 1024; // 25 MB per stream
+    private const long MaxPdfSizeBytes = 150 * 1024 * 1024;
+    private const long MaxEmbeddedStreamSize = 25 * 1024 * 1024;
     private const int MaxNestingDepth = 15;
 
-    public async Task<DocuTrustFileCheckResult> GetPageAsync(int pageNumber, int allPages, IFormFile file)
+    public async Task<DocuTrustFileCheckResult> GetPageAsync(int pageNumber, int allPages, IFormFile file, CancellationToken token = default)
     {
+        token.ThrowIfCancellationRequested();
         try
         {
-            var encryptionResult = await CheckEncryptionAsync(file);
+            var encryptionResult = await CheckEncryptionAsync(file, token);
             if (encryptionResult.IsEncrypted || !encryptionResult.IsScanned || (encryptionResult.Message?.Contains("Integrity") ?? false))
                 return encryptionResult;
 
@@ -36,6 +34,7 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
                 var allText = new StringBuilder();
                 foreach (var page in pdf.GetPages())
                 {
+                    token.ThrowIfCancellationRequested();
                     var words = page.GetWords(NearestNeighbourWordExtractor.Instance);
                     allText.AppendLine(string.Join(" ", words.Select(w => w.Text)));
                 }
@@ -49,6 +48,7 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
             }
             else
             {
+                token.ThrowIfCancellationRequested();
                 if (pageNumber > pdf.NumberOfPages || pageNumber < 1)
                     return new DocuTrustFileCheckResult { IsClean = false, Message = "Requested page index out of range.", IsScanned = true };
 
@@ -63,17 +63,22 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
                 };
             }
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             throw new DocuTrustValidationException("Failed to extract text from PDF.", ex);
         }
     }
 
-    public async Task<DocuTrustFileCheckResult> ScanFileContentAsync(IFormFile file)
+    public async Task<DocuTrustFileCheckResult> ScanFileContentAsync(IFormFile file, CancellationToken token = default)
     {
+        token.ThrowIfCancellationRequested();
         try
         {
-            var integrityCheck = await CheckEncryptionAsync(file);
+            var integrityCheck = await CheckEncryptionAsync(file, token);
             if (!integrityCheck.IsScanned || !integrityCheck.IsClean || integrityCheck.IsEncrypted)
                 return integrityCheck;
 
@@ -81,40 +86,36 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
             using var pdf = PdfDocument.Open(stream);
             var catalog = pdf.Structure.Catalog.CatalogDictionary;
 
-            // 1. Scan Catalog for Global Actions
-            if (ScanCatalogActions(catalog, pdf, out string actionMessage))
+            if (ScanCatalogActions(catalog, pdf, out string actionMessage, token))
             {
                 return new DocuTrustFileCheckResult { IsClean = false, Message = actionMessage, IsScanned = true };
             }
 
-            // 2. Scan Names Dictionary
             if (catalog.TryGet(NameToken.Names, out IToken? namesToken))
             {
-                if (IsNamesDictionaryMalicious(namesToken, pdf, out string namesMessage))
+                if (IsNamesDictionaryMalicious(namesToken, pdf, out string namesMessage, token))
                 {
                     return new DocuTrustFileCheckResult { IsClean = false, Message = namesMessage, IsScanned = true };
                 }
             }
 
-            // 3. Scan for Additional Actions
             if (catalog.TryGet(NameToken.Create("AA"), out IToken? _))
             {
                 return new DocuTrustFileCheckResult { IsClean = false, Message = "Suspicious Additional Actions (/AA) detected in catalog.", IsScanned = true };
             }
 
-            // 4. Scan Form Fields
             if (catalog.TryGet(NameToken.Create("AcroForm"), out IToken? acroFormToken))
             {
-                if (IsAcroFormSuspicious(acroFormToken, pdf))
+                if (IsAcroFormSuspicious(acroFormToken, pdf, token))
                 {
                     return new DocuTrustFileCheckResult { IsClean = false, Message = "Suspicious scripts or embedded data found in AcroForm.", IsScanned = true };
                 }
             }
 
-            // 5. Deep Page Scan
             foreach (var page in pdf.GetPages())
             {
-                if (ScanPageForAnomalies(page, pdf, out string pageMessage))
+                token.ThrowIfCancellationRequested();
+                if (ScanPageForAnomalies(page, pdf, out string pageMessage, token))
                 {
                     return new DocuTrustFileCheckResult { IsClean = false, Message = pageMessage, IsScanned = true };
                 }
@@ -122,14 +123,19 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
 
             return new DocuTrustFileCheckResult { IsClean = true, Message = "The PDF file passed behavioral analysis.", IsScanned = true };
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             throw new DocuTrustValidationException("Deep scan of PDF failed.", ex);
         }
     }
 
-    private async Task<DocuTrustFileCheckResult> CheckEncryptionAsync(IFormFile file)
+    private async Task<DocuTrustFileCheckResult> CheckEncryptionAsync(IFormFile file, CancellationToken token)
     {
+        token.ThrowIfCancellationRequested();
         if (file.Length > MaxPdfSizeBytes)
         {
             return new DocuTrustFileCheckResult { IsClean = false, Message = "File exceeds maximum safety size limit.", IsScanned = true };
@@ -139,7 +145,8 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
         {
             using var stream = file.OpenReadStream();
             byte[] header = new byte[5];
-            if (await stream.ReadAsync(header, 0, 5) < 5 || Encoding.ASCII.GetString(header) != "%PDF-")
+            token.ThrowIfCancellationRequested();
+            if (await stream.ReadAsync(header, 0, 5, token) < 5 || Encoding.ASCII.GetString(header) != "%PDF-")
             {
                 return new DocuTrustFileCheckResult { IsClean = false, Message = "Invalid PDF header signature.", IsScanned = true };
             }
@@ -149,6 +156,10 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
             {
                 return new DocuTrustFileCheckResult { IsEncrypted = false, Message = "The PDF file is not encrypted.", IsScanned = true, IsClean = true };
             }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (PdfDocumentEncryptedException)
         {
@@ -160,12 +171,13 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
         }
     }
 
-    private bool ScanCatalogActions(DictionaryToken catalog, PdfDocument pdf, out string message)
+    private bool ScanCatalogActions(DictionaryToken catalog, PdfDocument pdf, out string message, CancellationToken token)
     {
+        token.ThrowIfCancellationRequested();
         message = string.Empty;
         if (catalog.TryGet(NameToken.OpenAction, out IToken? openAction))
         {
-            if (IsActionMalicious(openAction, pdf, out message))
+            if (IsActionMalicious(openAction, pdf, out message, 0, token))
             {
                 message = $"Malicious OpenAction: {message}";
                 return true;
@@ -174,8 +186,9 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
         return false;
     }
 
-    private bool ScanPageForAnomalies(Page page, PdfDocument pdf, out string message)
+    private bool ScanPageForAnomalies(Page page, PdfDocument pdf, out string message, CancellationToken token)
     {
+        token.ThrowIfCancellationRequested();
         message = string.Empty;
         if (page.Dictionary != null && page.Dictionary.TryGet(NameToken.Create("AA"), out _))
         {
@@ -185,7 +198,7 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
 
         if (page.Dictionary != null && page.Dictionary.TryGet(NameToken.Annots, out IToken? annotsToken))
         {
-            if (IsAnnotationListMalicious(annotsToken, pdf, out message))
+            if (IsAnnotationListMalicious(annotsToken, pdf, out message, token))
             {
                 message = $"Malicious annotation on page {page.Number}: {message}";
                 return true;
@@ -195,12 +208,13 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
         return false;
     }
 
-    private bool IsActionMalicious(IToken token, PdfDocument pdf, out string message, int depth = 0)
+    private bool IsActionMalicious(IToken token, PdfDocument pdf, out string message, int depth, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         message = string.Empty;
         if (depth > MaxNestingDepth) return false;
 
-        var actionDict = ResolveToDictionary(token, pdf);
+        var actionDict = ResolveToDictionary(token, pdf, cancellationToken);
         if (actionDict == null) return false;
 
         if (actionDict.TryGet(NameToken.S, out NameToken? s) && s != null)
@@ -225,16 +239,17 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
 
         if (actionDict.TryGet(NameToken.Create("Next"), out IToken? next))
         {
-            return IsActionMalicious(next, pdf, out message, depth + 1);
+            return IsActionMalicious(next, pdf, out message, depth + 1, cancellationToken);
         }
 
         return false;
     }
 
-    private bool IsNamesDictionaryMalicious(IToken token, PdfDocument pdf, out string message)
+    private bool IsNamesDictionaryMalicious(IToken token, PdfDocument pdf, out string message, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         message = string.Empty;
-        var namesDict = ResolveToDictionary(token, pdf);
+        var namesDict = ResolveToDictionary(token, pdf, cancellationToken);
         if (namesDict == null) return false;
 
         if (namesDict.TryGet(NameToken.EmbeddedFiles, out _))
@@ -252,17 +267,19 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
         return false;
     }
 
-    private bool IsAnnotationListMalicious(IToken annotsToken, PdfDocument pdf, out string message)
+    private bool IsAnnotationListMalicious(IToken annotsToken, PdfDocument pdf, out string message, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         message = string.Empty;
         if (annotsToken is ArrayToken array)
         {
             foreach (var item in array.Data)
             {
-                var annot = ResolveToDictionary(item, pdf);
+                cancellationToken.ThrowIfCancellationRequested();
+                var annot = ResolveToDictionary(item, pdf, cancellationToken);
                 if (annot == null) continue;
 
-                if (annot.TryGet(NameToken.A, out IToken? action) && IsActionMalicious(action, pdf, out message)) return true;
+                if (annot.TryGet(NameToken.A, out IToken? action) && IsActionMalicious(action, pdf, out message, 0, cancellationToken)) return true;
                 if (annot.TryGet(NameToken.Create("AA"), out _))
                 {
                     message = "Annotation with automatic trigger (/AA) detected.";
@@ -279,9 +296,10 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
         return false;
     }
 
-    private bool IsAcroFormSuspicious(IToken token, PdfDocument pdf)
+    private bool IsAcroFormSuspicious(IToken token, PdfDocument pdf, CancellationToken cancellationToken)
     {
-        var acroForm = ResolveToDictionary(token, pdf);
+        cancellationToken.ThrowIfCancellationRequested();
+        var acroForm = ResolveToDictionary(token, pdf, cancellationToken);
         if (acroForm == null) return false;
 
         if (acroForm.TryGet(NameToken.Create("XFA"), out _)) return true;
@@ -289,8 +307,9 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
         return acroForm.TryGet(NameToken.Create("JS"), out _) || acroForm.TryGet(NameToken.Create("JavaScript"), out _);
     }
 
-    private DictionaryToken? ResolveToDictionary(IToken token, PdfDocument pdf)
+    private DictionaryToken? ResolveToDictionary(IToken token, PdfDocument pdf, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         try
         {
             if (token is DictionaryToken d) return d;
@@ -307,6 +326,10 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
                     return stream.StreamDictionary;
                 }
             }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch { }
         return null;

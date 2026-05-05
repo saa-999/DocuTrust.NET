@@ -24,3 +24,7 @@ node_modules/
 # OS files
 Thumbs.db
 .DS_Store
+
+# Documentation
+GEMINI.md
+SECURITY_AUDIT_REPORT.md
