@@ -163,9 +163,9 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
         {
             return new DocuTrustFileCheckResult { IsEncrypted = true, Message = "The PDF file is encrypted.", IsScanned = true, IsClean = true };
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            return new DocuTrustFileCheckResult { IsClean = false, Message = $"Integrity check failed: {ex.Message}", IsScanned = true };
+            return new DocuTrustFileCheckResult { IsClean = false, Message = "A secure processing error occurred.", IsScanned = true };
         }
     }
 
@@ -329,7 +329,10 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
         {
             throw;
         }
-        catch { }
+        catch (Exception ex)
+        {
+            throw new DocuTrustValidationException("Error resolving PDF token to dictionary.", ex);
+        }
         return null;
     }
 }

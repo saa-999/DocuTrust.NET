@@ -222,7 +222,15 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
         try
         {
             using var partStream = part.GetStream();
-            using var reader = XmlReader.Create(partStream);
+
+            
+            XmlReaderSettings settings = new XmlReaderSettings
+            {
+                DtdProcessing = DtdProcessing.Prohibit,
+                XmlResolver = null
+            };
+
+            using var reader = XmlReader.Create(partStream, settings);
             while (reader.Read())
             {
                 token.ThrowIfCancellationRequested();
@@ -241,10 +249,11 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
         return false;
     }
 
-    private bool HasSuspiciousRelationships(OpenXmlPartContainer? container, CancellationToken token)
+    private bool HasSuspiciousRelationships(OpenXmlPartContainer? container, CancellationToken token, int currentDepth = 0)
     {
         token.ThrowIfCancellationRequested();
         if (container == null) return false;
+        if (currentDepth > 50) throw new System.Security.SecurityException("Maximum recursion depth exceeded during relationship analysis.");
 
         foreach (var rel in container.ExternalRelationships)
         {
@@ -257,7 +266,7 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
                 return true;
         }
 
-        return container.Parts.Any(p => HasSuspiciousRelationships(p.OpenXmlPart, token));
+        return container.Parts.Any(p => HasSuspiciousRelationships(p.OpenXmlPart, token, currentDepth + 1));
     }
 
     private async Task<DocuTrustFileCheckResult> ScanLegacyOfficeAsync(Stream stream, CancellationToken token)
