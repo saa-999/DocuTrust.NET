@@ -9,27 +9,29 @@ using DocumentFormat.OpenXml.Spreadsheet;
 using DocumentFormat.OpenXml.Presentation;
 using DocuTrust.Core.Abstractions;
 using DocuTrust.Core.Models;
+using DocuTrust.Core.Constants;
 using DocuTrust.Exceptions;
+
 
 namespace DocuTrust.Core.Services;
 
 internal class DocuTrustOfficeScanner : IDocuTrustContentFile
 {
-    private const long MaxFileSizeBytes = 100 * 1024 * 1024;
-    private const long MaxPartSizeBytes = 20 * 1024 * 1024;
-    private const int MaxPackageEntries = 5000;
 
     private static readonly HashSet<string> MaliciousExts = new(StringComparer.OrdinalIgnoreCase)
     {
         ".exe", ".vbs", ".ps1", ".bat", ".com", ".scr", ".js", ".jse", ".wsf", ".wsh", ".vbe", ".jar"
     };
 
+    private static readonly IMemoryPool<byte> _memoryPool = new DoucTrustMemoryPool<byte>();
+
+
     public async Task<DocuTrustFileCheckResult> GetPageAsync(int pageNumber, int allPages, IFormFile file, CancellationToken token = default)
     {
         token.ThrowIfCancellationRequested();
         try
         {
-            if (file.Length > MaxFileSizeBytes)
+            if (file.Length > FileSize.MaxFileSizeBytes)
             {
                 return new DocuTrustFileCheckResult { IsClean = false, Message = "File exceeds security size limits.", IsScanned = true };
             }
@@ -64,7 +66,7 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
         token.ThrowIfCancellationRequested();
         try
         {
-            if (file.Length > MaxFileSizeBytes)
+            if (file.Length > FileSize.MaxFileSizeBytes)
             {
                 return new DocuTrustFileCheckResult { IsClean = false, Message = "File exceeds security scan size limit.", IsScanned = true };
             }
@@ -102,13 +104,13 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
         token.ThrowIfCancellationRequested();
         using (var zip = new ZipArchive(stream, ZipArchiveMode.Read, true))
         {
-            if (zip.Entries.Count > MaxPackageEntries)
+            if (zip.Entries.Count > FileSize.MaxPackageEntries)
                 return new DocuTrustFileCheckResult { IsClean = false, Message = "Package contains excessive number of parts.", IsScanned = true };
 
             foreach (var entry in zip.Entries)
             {
                 token.ThrowIfCancellationRequested();
-                if (entry.Length > MaxPartSizeBytes)
+                if (entry.Length > FileSize.MaxPartSizeBytes)
                     return new DocuTrustFileCheckResult { IsClean = false, Message = $"Part '{entry.FullName}' exceeds safety size limit.", IsScanned = true };
 
                 if (entry.FullName.EndsWith("vbaProject.bin", StringComparison.OrdinalIgnoreCase))
@@ -260,13 +262,33 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
 
     private async Task<DocuTrustFileCheckResult> ScanLegacyOfficeAsync(Stream stream, CancellationToken token)
     {
+        IMemoryPool<byte> memoryPool = new DoucTrustMemoryPool<byte>();
+      
+         
+        
         token.ThrowIfCancellationRequested();
-        byte[] data = new byte[stream.Length];
-        token.ThrowIfCancellationRequested();
-        _ = await stream.ReadAsync(data, 0, (int)stream.Length, token);
 
-        string ascii = Encoding.ASCII.GetString(data);
-        string utf16 = Encoding.Unicode.GetString(data);
+
+        int length_stream = (int)stream.Length;
+
+        byte[] date = _memoryPool.Rent(length_stream);
+       
+
+        try
+        { 
+             token.ThrowIfCancellationRequested();
+
+             int bytesRead = await stream.ReadAsync(date, 0, length_stream, token);
+             
+             
+            string ascii = Encoding.ASCII.GetString(date, 0, bytesRead);
+            string utf16 = Encoding.Unicode.GetString(date, 0, bytesRead);
+
+
+            
+        
+
+
 
         string[] suspiciousKeywords = {
             "VBAProject", "_VBA_PROJECT_CUR", "PROJECTwm",
@@ -286,6 +308,11 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
 
         if (ascii.Contains("\x01Ole10Native"))
             return new DocuTrustFileCheckResult { IsClean = false, Message = "Legacy file contains embedded OLE objects.", IsScanned = true };
+        }
+        finally
+        {
+            _memoryPool.Return(date);
+        }
 
         return new DocuTrustFileCheckResult { IsClean = true, Message = "Legacy heuristics passed.", IsScanned = true };
     }
@@ -369,24 +396,43 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
         {
             return new DocuTrustFileCheckResult { IsClean = false, Message = $"Text extraction error: {ex.Message}", IsScanned = true };
         }
+    
     }
 
     private async Task<DocuTrustFileCheckResult> ExtractLegacyTextAsync(Stream stream, CancellationToken token)
     {
+        
         token.ThrowIfCancellationRequested();
-        byte[] data = new byte[stream.Length];
-        token.ThrowIfCancellationRequested();
-        _ = await stream.ReadAsync(data, 0, (int)stream.Length, token);
-        string raw = Encoding.ASCII.GetString(data);
 
-        var sb = new StringBuilder();
+
+         int length_stream = (int)stream.Length;
+         byte[] buffer = _memoryPool.Rent(length_stream);
+         var sb = new StringBuilder();
+        try
+        {
+           token.ThrowIfCancellationRequested();
+
+           int bytesRead = await stream.ReadAsync(buffer, 0, length_stream, token);
+           
+           
+           string raw = Encoding.ASCII.GetString(buffer, 0, bytesRead);
+
+            
+        
+    
         foreach (char c in raw)
         {
             token.ThrowIfCancellationRequested();
             if (char.IsLetterOrDigit(c) || char.IsPunctuation(c) || char.IsWhiteSpace(c))
                 sb.Append(c);
         }
-
-        return new DocuTrustFileCheckResult { IsClean = true, Page = sb.ToString(), Message = "Strings extracted from legacy/binary format.", IsScanned = true };
+        } finally
+        {
+            _memoryPool.Return(buffer);
+            
+        }
+     return new DocuTrustFileCheckResult { IsClean = true, Page = sb.ToString(), Message = "Strings extracted from legacy/binary format.", IsScanned = true };
     }
+    
+
 }

@@ -7,15 +7,13 @@ using UglyToad.PdfPig.Exceptions;
 using UglyToad.PdfPig.Tokens;
 using DocuTrust.Core.Abstractions;
 using DocuTrust.Core.Models;
+using DocuTrust.Core.Constants;
 using DocuTrust.Exceptions;
 
 namespace DocuTrust.Core.Services;
 
 internal class DocuTrustPdfScanner : IDocuTrustContentFile
 {
-    private const long MaxPdfSizeBytes = 150 * 1024 * 1024;
-    private const long MaxEmbeddedStreamSize = 25 * 1024 * 1024;
-    private const int MaxNestingDepth = 15;
 
     public async Task<DocuTrustFileCheckResult> GetPageAsync(int pageNumber, int allPages, IFormFile file, CancellationToken token = default)
     {
@@ -136,7 +134,7 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
     private async Task<DocuTrustFileCheckResult> CheckEncryptionAsync(IFormFile file, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
-        if (file.Length > MaxPdfSizeBytes)
+        if (file.Length > FileSize.MaxPdfSizeBytes)
         {
             return new DocuTrustFileCheckResult { IsClean = false, Message = "File exceeds maximum safety size limit.", IsScanned = true };
         }
@@ -212,7 +210,7 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
     {
         cancellationToken.ThrowIfCancellationRequested();
         message = string.Empty;
-        if (depth > MaxNestingDepth) return false;
+        if (depth > FileSize.MaxNestingDepth) return false;
 
         var actionDict = ResolveToDictionary(token, pdf, cancellationToken);
         if (actionDict == null) return false;
@@ -319,7 +317,7 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
                 if (obj.Data is DictionaryToken dict) return dict;
                 if (obj.Data is StreamToken stream)
                 {
-                    if (stream.StreamDictionary.TryGet(NameToken.Length, out NumericToken? len) && len != null && len.Long > MaxEmbeddedStreamSize)
+                    if (stream.StreamDictionary.TryGet(NameToken.Length, out NumericToken? len) && len != null && len.Long > FileSize.MaxEmbeddedStreamSize)
                     {
                         return null;
                     }
