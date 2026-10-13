@@ -8,6 +8,7 @@ using UglyToad.PdfPig.Tokens;
 using DocuTrust.Core.Abstractions;
 using DocuTrust.Core.Models;
 using DocuTrust.Core.Constants;
+using DocuTrust.Core.Scanning;
 using DocuTrust.Exceptions;
 
 namespace DocuTrust.Core.Services;
@@ -104,9 +105,9 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
 
             if (catalog.TryGet(NameToken.Create("AcroForm"), out IToken? acroFormToken))
             {
-                if (IsAcroFormSuspicious(acroFormToken, pdf, token))
+                if (IsAcroFormSuspicious(acroFormToken, pdf, out string formMessage, token))
                 {
-                    return new DocuTrustFileCheckResult { IsClean = false, Message = "Suspicious scripts or embedded data found in AcroForm.", IsScanned = true };
+                    return new DocuTrustFileCheckResult { IsClean = false, Message = $"Suspicious content in AcroForm: {formMessage}", IsScanned = true };
                 }
             }
 
@@ -242,24 +243,11 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
             if (actionDict == null)
                 continue;
 
-            if (actionDict.TryGet(NameToken.S, out NameToken s))
+            // Covers every dangerous /S type, /URI schemes and a /JS key without /S.
+            if (PdfThreatRules.Inspect(actionDict) is { } threat)
             {
-                string actionType = s.Data;
-                if (actionType == "JavaScript" || actionType == "JS")
-                {
-                    message = "Embedded JavaScript detected.";
-                    return true;
-                }
-                if (actionType == "Launch")
-                {
-                    message = "External process launch command (/Launch) detected.";
-                    return true;
-                }
-                if (actionType == "GoToR" || actionType == "ImportData")
-                {
-                    message = $"Remote resource action (/{actionType}) detected.";
-                    return true;
-                }
+                message = threat;
+                return true;
             }
 
             if (actionDict.TryGet(NameToken.Create("Next"), out IToken? next))
@@ -305,41 +293,90 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
     {
         cancellationToken.ThrowIfCancellationRequested();
         message = string.Empty;
-        if (annotsToken is ArrayToken array)
-        {
-            foreach (var item in array.Data)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                var annot = ResolveToDictionary(item, pdf, cancellationToken);
-                if (annot == null) continue;
+        var annots = annotsToken is IndirectReferenceToken ? Resolve(annotsToken, pdf) : annotsToken;
+        if (annots is not ArrayToken array)
+            return false;
 
-                if (annot.TryGet(NameToken.A, out IToken? action) && IsActionMalicious(action, pdf, out message, cancellationToken)) return true;
-                if (annot.TryGet(NameToken.Create("AA"), out _))
-                {
-                    message = "Annotation with automatic trigger (/AA) detected.";
-                    return true;
-                }
-                
-                if (annot.TryGet(NameToken.Subtype, out NameToken subtype) && subtype.Data == "FileAttachment")
-                {
-                    message = "File attachment annotation detected.";
-                    return true;
-                }
+        foreach (var item in array.Data)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var annot = ResolveToDictionary(item, pdf, cancellationToken);
+            if (annot == null)
+                continue;
+
+            // /AA, /RichMedia, /Screen, /Movie, /Sound, /3D, /FileAttachment, embedded files...
+            if (PdfThreatRules.Inspect(annot) is { } threat)
+            {
+                message = threat;
+                return true;
             }
+
+            if (annot.TryGet(NameToken.A, out IToken? action) && IsActionMalicious(action, pdf, out message, cancellationToken))
+                return true;
         }
         return false;
     }
 
-    private bool IsAcroFormSuspicious(IToken token, PdfDocument pdf, CancellationToken cancellationToken)
+    private bool IsAcroFormSuspicious(IToken token, PdfDocument pdf, out string message, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        message = string.Empty;
         var acroForm = ResolveToDictionary(token, pdf, cancellationToken);
-        if (acroForm == null) return false;
+        if (acroForm == null)
+            return false;
 
-        if (acroForm.TryGet(NameToken.Create("XFA"), out _)) return true;
+        if (PdfThreatRules.Inspect(acroForm) is { } formThreat)
+        {
+            message = formThreat;
+            return true;
+        }
 
-        return acroForm.TryGet(NameToken.Create("JS"), out _) || acroForm.TryGet(NameToken.Create("JavaScript"), out _);
+        if (!acroForm.TryGet(NameToken.Create("Fields"), out IToken? fieldsToken))
+            return false;
+
+        // Fields (and their /Kids) carry keystroke/format/validate/calculate scripts in /AA even without a widget.
+        var pending = new Stack<(IToken Token, int Depth)>();
+        var visited = new HashSet<UglyToad.PdfPig.Core.IndirectReference>();
+        if (Resolve(fieldsToken, pdf) is ArrayToken roots)
+            foreach (var field in roots.Data)
+                pending.Push((field, 0));
+
+        int inspected = 0;
+        while (pending.Count > 0)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var (current, depth) = pending.Pop();
+            if (depth > FileSize.MaxNestingDepth || ++inspected > MaxFormFields)
+            {
+                message = "Form field tree exceeds the inspection limits.";
+                return true;
+            }
+            if (current is IndirectReferenceToken reference && !visited.Add(reference.Data))
+                continue;
+
+            var field = ResolveToDictionary(current, pdf, cancellationToken);
+            if (field == null)
+                continue;
+
+            if (PdfThreatRules.Inspect(field) is { } fieldThreat)
+            {
+                message = fieldThreat;
+                return true;
+            }
+            if (field.TryGet(NameToken.A, out IToken? action) && IsActionMalicious(action, pdf, out message, cancellationToken))
+                return true;
+
+            if (field.TryGet(NameToken.Kids, out IToken? kidsToken) && Resolve(kidsToken, pdf) is ArrayToken kids)
+                foreach (var kid in kids.Data)
+                    pending.Push((kid, depth + 1));
+        }
+        return false;
     }
+
+    private const int MaxFormFields = 100_000;
+
+    private static IToken? Resolve(IToken token, PdfDocument pdf)
+        => token is IndirectReferenceToken reference ? pdf.Structure.GetObject(reference.Data).Data : token;
 
     private DictionaryToken? ResolveToDictionary(IToken token, PdfDocument pdf, CancellationToken cancellationToken)
     {

@@ -54,7 +54,7 @@ Empirical probes run before the fixes (scratch program, not committed):
 | DT-019 | Undecryptable encrypted PDFs reported `IsClean = true` | High | Fixed |
 | DT-020 | PDF action chain: depth limit fails open; `/Next` arrays ignored | High | Fixed |
 | DT-021 | PDF objects that are streams with declared `/Length` > 25 MB are skipped | Medium | Fixed |
-| DT-022 | Missing PDF action types, annotation subtypes, form-field `/AA`, URI schemes | High | Open |
+| DT-022 | Missing PDF action types, annotation subtypes, form-field `/AA`, URI schemes | High | Fixed |
 | DT-023 | PDF objects off the hard-coded paths are never inspected; no raw-byte defense in depth | Medium | Open |
 | DT-024 | `#xx`-escaped PDF names bypass structural checks | Info | Open |
 | DT-025 | PDF `GetPageAsync` reports `IsClean = true` without a threat scan; file parsed 2–3 times | Medium | Open |
@@ -317,10 +317,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: src/DocuTrust/Core/Services/DocuTrustPdfScanner.cs:218-236 (`IsActionMalicious`), :280-291 (`IsAnnotationListMalicious`), :297-306 (`IsAcroFormSuspicious`)
 - Description: Not detected: `/URI` actions with `javascript:`, `file:`, UNC or other non-web schemes; `/SubmitForm`, `/GoToE`, `/Rendition`, `/RichMediaExecute`, `/Sound`, `/Movie`; a `/JS` key without `/S`; annotation subtypes `/RichMedia`, `/Screen`, `/Movie`, `/Sound`, `/3D`; AcroForm field `/AA` and `/A` (keystroke/format/calculate scripts on fields without widgets). Comparisons are case-sensitive.
 - Attack scenario / PoC: `/AcroForm << /Fields [6 0 R] >>` with field 6 carrying `/AA << /C << /S /JavaScript /JS (…) >> >>` → clean; link annotation with `/A << /S /URI /URI (javascript:…) >>` → clean.
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: New `PdfThreatRules.Inspect(DictionaryToken)` with case-insensitive name comparison and constant messages, applied to every action in the `/OpenAction` chain, every annotation (plus its `/A` chain) and every AcroForm field. Rules: keys `/JS` (also without `/S`), `/JavaScript`, `/AA`, `/XFA`, `/EmbeddedFiles`, `/EF`, `/RichMediaContent`, `/RichMediaSettings`; `/S` in {JavaScript, JS, Launch, GoToR, ImportData, GoToE, SubmitForm, Rendition, RichMediaExecute, Sound, Movie}; `/S /URI` whose target is not http/https/mailto/relative (`javascript:`, `file:`, `smb:`, drive letters, UNC `\\` or `//`; whitespace/control characters stripped first); `/Subtype` in {FileAttachment, RichMedia, Screen, Movie, Sound, 3D}; `/Type /EmbeddedFile`. AcroForm `/Fields` and their `/Kids` are walked iteratively with a visited set and limits (depth, 100 000 fields), so field `/AA` scripts are found without a widget.
+- Regression test: PdfActionCoverageTests (23 cases: 6 dangerous URI targets, 8 action types incl. case variants, /JS without /S, 5 annotation subtypes, field /AA without widget, kid field /A, ordinary links/mailto/fields stay clean)
+- Status: Fixed
+- Commit: `git log --grep "DT-022"`
 
 ### DT-023 — PDF objects off the hard-coded paths are never inspected; no raw-byte defense in depth
 - Severity: Medium
