@@ -43,7 +43,7 @@ Empirical probes run before the fixes (scratch program, not committed):
 | DT-008 | Whole-file string decoding (≈3× memory); UTF-16 only at even offsets; `Ole10Native` check dead | Medium | Fixed |
 | DT-009 | Zip bomb: no total budget, no ratio limit, CD read before count check, extraction unchecked | High | Fixed |
 | DT-010 | Macro detection relies on the part name `vbaProject.bin` only | High | Fixed |
-| DT-011 | Embedded payload detection: case-sensitive, incomplete list, no content sniffing, OLE/nested not inspected | High | Open |
+| DT-011 | Embedded payload detection: case-sensitive, incomplete list, no content sniffing, OLE/nested not inspected | High | Fixed |
 | DT-012 | DDE detection gaps and fail-open `catch {}` | High | Open |
 | DT-013 | Relationship analysis gaps and exponential traversal | High | Open |
 | DT-014 | Every OOXML package is inspected as Word (Excel/PowerPoint branches dead) | Low | Fixed |
@@ -196,10 +196,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: src/DocuTrust/Core/Services/DocuTrustOfficeScanner.cs:21-24, :119-124 (`ScanModernOffice`)
 - Description: (1) `entry.FullName.Contains("embeddings/")` is case-sensitive (`word/Embeddings/x.exe` passes) and ignores executables stored elsewhere in the package. (2) The extension block-list misses `.hta .lnk .cmd .msi .dll .cpl .pif .reg .iso .scf .sct .chm .xll`, macro-enabled Office types and more. (3) Detection is by extension only: `payload.dat` containing a PE (`MZ`) passes. (4) `oleObject*.bin` (OLE Package / `Ole10Native` carriers, Equation Editor `Equation Native` streams, embedded legacy documents with VBA) are not inspected. (5) Embedded OOXML packages (`.docm` inside `.docx`) are not inspected.
 - Attack scenario / PoC: `word/embeddings/oleObject1.bin` = OLE Package wrapping `invoice.exe` → clean.
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: (1) Extension check applies to every part, case-insensitively, after trimming trailing dots/spaces (Windows ignores them). (2) The block-list now covers PE/driver types, installers (`.msi .msix .appx …`), scripts (`.cmd .wsc .ps1/.psm1 .sh …`), `.hta .sct .chm .jar .reg .inf .scf .lnk .url`, shell/search connectors, disk images (`.iso .img .vhd(x)`), `.cab`, `.xll` and all macro-enabled Office types. (3) Every part is classified by its first bytes: PE (`MZ`), ELF, Mach-O/fat/Java class, and Windows shortcut headers are rejected whatever the name. (4) Embedded OLE/CFB blobs (`oleObject*.bin`, embedded `.doc/.xls`) are scanned (ASCII + UTF-16LE) for VBA storages, OLE Package (`\u0001Ole10Native`) and Equation Editor (`Equation Native`) streams. (5) Embedded ZIP/OOXML parts are copied (bounded) and inspected recursively with the same rules and the shared budget, up to `FileSize.MaxNestedPackageDepth` (3); deeper nesting fails closed. The nested copy uses `PooledChunkReader`, not `Stream.CopyToAsync`, whose pooled buffer would go back to the shared pool uncleared.
+- Regression test: OfficeEmbeddedPayloadTests (24 cases: capitalised folder, payload outside embeddings, 13 newly blocked extensions incl. trailing dot, PE and ELF headers behind innocent names, OLE Package, Equation Editor, embedded legacy doc with VBA, nested macro-enabled package, payload in plain embedded ZIP, nesting depth, benign embedded workbook/OLE object stays clean)
+- Status: Fixed
+- Commit: `git log --grep "DT-011"`
 
 ### DT-012 — DDE detection gaps and fail-open `catch {}`
 - Severity: High

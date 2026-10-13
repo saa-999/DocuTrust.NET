@@ -17,5 +17,8 @@ internal static class FileSize
 
     /// <summary>Parts smaller than this are not subject to the ratio check (tiny XML compresses extremely well).</summary>
     public const long CompressionRatioThresholdBytes = 1L * 1024 * 1024;
+
+    /// <summary>How many levels of packages embedded in packages are inspected before failing closed.</summary>
+    public const int MaxNestedPackageDepth = 3;
     
 }

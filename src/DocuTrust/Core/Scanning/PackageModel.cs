@@ -20,6 +20,10 @@ internal readonly record struct PackageRelationship(string Type, string Target, 
 internal sealed class PackageModel
 {
     private readonly Dictionary<string, string> _defaults = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>A package without <c>[Content_Types].xml</c> (only valid for embedded archives).</summary>
+    public static PackageModel Empty => new();
+
     private readonly Dictionary<string, string> _overrides = new(StringComparer.OrdinalIgnoreCase);
 
     public IEnumerable<string> AllContentTypes => _defaults.Values.Concat(_overrides.Values);

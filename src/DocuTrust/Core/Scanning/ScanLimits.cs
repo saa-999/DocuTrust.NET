@@ -42,4 +42,6 @@ internal sealed class OfficeScanLimits
     public int MaxCompressionRatio { get; init; } = FileSize.MaxCompressionRatio;
 
     public long CompressionRatioThresholdBytes { get; init; } = FileSize.CompressionRatioThresholdBytes;
+
+    public int MaxNestedPackageDepth { get; init; } = FileSize.MaxNestedPackageDepth;
 }
