@@ -37,6 +37,9 @@ internal sealed class PdfRawScanner
         ["3D"] = "Suspicious PDF construct /3D found in raw file content.",
     };
 
+    private const uint ZipLocalFileHeader = 0x504B0304;       // "PK\x03\x04"
+    private const uint ZipEndOfCentralDirectory = 0x504B0506; // "PK\x05\x06"
+
     private static readonly byte[] EndStream = "endstream"u8.ToArray();
     private static readonly int[] EndStreamFailure = BuildFailureTable(EndStream);
 
@@ -48,6 +51,7 @@ internal sealed class PdfRawScanner
     private int _hexHigh;
     private int _wordLength;
     private int _endStreamMatched;
+    private uint _lastFourBytes;
 
     /// <summary>The first threat found, or null. Scanning continues after a threat so the whole file is read.</summary>
     public string? Threat { get; private set; }
@@ -79,6 +83,15 @@ internal sealed class PdfRawScanner
 
     private void Step(byte b)
     {
+        // A ZIP signature outside stream bodies means a second file format is carried in the same bytes
+        // (PDF/ZIP polyglot): ZIP readers locate the archive from these records regardless of the PDF header.
+        if (_state != State.Stream)
+        {
+            _lastFourBytes = (_lastFourBytes << 8) | b;
+            if (Threat == null && _lastFourBytes is ZipLocalFileHeader or ZipEndOfCentralDirectory)
+                Threat = "ZIP archive embedded outside PDF objects (PDF/ZIP polyglot) detected.";
+        }
+
         while (true)
         {
             switch (_state)
@@ -141,6 +154,7 @@ internal sealed class PdfRawScanner
                     {
                         _state = State.Stream;
                         _endStreamMatched = 0;
+                        _lastFourBytes = 0;
                         return;
                     }
 

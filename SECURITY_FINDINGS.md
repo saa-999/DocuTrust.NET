@@ -59,7 +59,7 @@ Empirical probes run before the fixes (scratch program, not committed):
 | DT-024 | `#xx`-escaped PDF names bypass structural checks | Info | Not an issue |
 | DT-025 | PDF `GetPageAsync` reports `IsClean = true` without a threat scan; file parsed 2–3 times | Medium | Open |
 | DT-026 | No PDF page-count, glyph or extracted-text limits | Medium | Open |
-| DT-027 | PDF/ZIP polyglots not detected | Low | Open |
+| DT-027 | PDF/ZIP polyglots not detected | Low | Fixed |
 | DT-028 | PdfPig 0.1.14 has known infinite-recursion (stack overflow) bugs | High | Fixed |
 | DT-029 | Empty `expectedExtension` makes `ValidateFileAsync` accept any type, including executables | High | Open |
 | DT-030 | Client filename extension ignored (double extensions, docs claim otherwise) | Medium | Open |
@@ -372,10 +372,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: src/DocuTrust/Core/Services/DocuTrustPdfScanner.cs (no check)
 - Description: A valid PDF with a ZIP archive appended (or embedded between objects) passes as a clean PDF. The same bytes open as a ZIP/JAR/OOXML package in other consumers (ZIP readers locate the end-of-central-directory record from the end of the file).
 - Attack scenario / PoC: `cat clean.pdf payload.zip > upload.pdf` → clean PDF; a downstream service or user opens it as an archive.
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: The raw PDF scanner tracks the last four bytes outside stream bodies and flags a ZIP local-file header (`PK\x03\x04`) or end-of-central-directory record (`PK\x05\x06`) there. Inside stream bodies such bytes are treated as ordinary (often compressed) data, which keeps false positives low.
+- Regression test: PdfPolyglotTests.Scan_ZipAppendedAfterEof_IsDetected; PdfPolyglotTests.Scan_ZipSignatureInsideStreamBody_IsClean (no false positive)
+- Status: Fixed
+- Commit: `git log --grep "DT-027"`
 
 ### DT-028 — PdfPig 0.1.14 has known infinite-recursion (stack overflow) bugs
 - Severity: High
