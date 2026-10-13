@@ -6,9 +6,9 @@ Main entry point for file validation.
 
 | Method | Parameters | Return | Description |
 | :--- | :--- | :--- | :--- |
-| `ValidateFileAsync` | `IFormFile file, string expectedExt` | `DocuTrustValidationResult` | Validates an uploaded file's signature against the expected extension. |
-| `ValidateFilePathAsync` | `string filePath, string expectedExt` | `DocuTrustValidationResult` | Validates a file on disk. |
-| `ValidateFileStreamAsync` | `Stream stream, string expectedExt` | `DocuTrustValidationResult` | Validates a raw stream. |
+| `ValidateFileAsync` | `IFormFile file, string expectedExt` | `DocuTrustValidationResult` | Validates an uploaded file's signature and client file name against the expected extension (required). |
+| `ValidateFilePathAsync` | `string filePath, string expectedExt` | `DocuTrustValidationResult` | Validates a file on disk. The path is trusted input (no traversal protection). |
+| `ValidateFileStreamAsync` | `Stream stream, string expectedExt` | `DocuTrustValidationResult` | Validates a raw (seekable) stream; its position is restored. |
 | `GetFileTypeAsync` | `string filePath` | `DocuTrustValidationResult` | Detects the MIME type and extension of a file. |
 
 ## DocuTrustValidationResult

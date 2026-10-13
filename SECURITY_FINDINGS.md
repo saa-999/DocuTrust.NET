@@ -29,6 +29,30 @@ Empirical probes run before the fixes (scratch program, not committed):
 - `FileFormatInspector.DetermineFileFormat` seeks the caller's stream to 0, inspects from offset 0, and leaves it at 0 (DT-032).
 - Any upload with the OLE/CFB magic reaches `OpenMcdf` from `ValidateFileAsync` (stack trace `OpenMcdf.Header.set_MiniSectorShift`) (DT-035).
 
+## Results after the audit
+
+| Check | Result |
+| --- | --- |
+| `dotnet build` (Debug and Release, `TreatWarningsAsErrors`) | OK, 0 warnings, 0 errors |
+| `dotnet test` | **225 passed**, 0 failed, 0 skipped (4 pre-existing tests unchanged and passing) |
+| `dotnet list package --vulnerable --include-transitive` | No vulnerable packages (library and tests) |
+| `dotnet list package --outdated` (library) | Up to date (`DocumentFormat.OpenXml` 3.5.1, `FileSignatures` 7.3.0, `PdfPig` 0.1.16) |
+| `dotnet list package --outdated` (tests) | `Microsoft.NET.Test.Sdk` 17.8.0 (18.11.0 available), `xunit.runner.visualstudio` 2.8.2 (4.x targets xunit v3); not vulnerable |
+
+| Severity | Total | Fixed | Not an issue | Open – Recommendation |
+| --- | --- | --- | --- | --- |
+| Critical | 0 | 0 | 0 | 0 |
+| High | 13 | 13 | 0 | 0 |
+| Medium | 13 | 13 | 0 | 0 |
+| Low | 11 | 11 | 0 | 0 |
+| Info | 5 | 1 | 3 | 1 |
+| **Total** | **42** | **38** | **3** | **1** |
+
+The custom pool (`DoucTrustMemoryPool`, `IMemoryPool`) is deleted. All buffering uses
+`ArrayPool<byte>.Shared` through `PooledChunkReader` (64 KB windows plus keyword overlap, explicit counts, one
+`Return(..., clearArray: true)` in `finally`) or bounded streaming. No code path loads a whole upload into a pooled
+array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**.
+
 ## Summary
 
 | ID | Title | Severity | Status |
@@ -546,8 +570,69 @@ Empirical probes run before the fixes (scratch program, not committed):
 
 ## Breaking changes / Recommendations
 
-_To be completed as fixes land._
+No public type, member or signature changed (`IDocuTrustFileValidator`, `DocuTrustValidationResult`,
+`DocuTrustFileCheckResult`, `DocuTrustValidationException`, `DocuTrustExtensions` are source- and binary-compatible;
+only XML doc comments were added). Package metadata (PackageId, Version, Authors, license) is unchanged. The following
+**behaviour** changes are deliberate (fail closed) and should be called out in release notes:
+
+| # | Change | Finding |
+| --- | --- | --- |
+| B1 | `ValidateFileAsync` with an empty/whitespace/`.` `expectedExtension` returns `IsValid = false` (detected type still reported). | DT-029 |
+| B2 | `ValidateFileAsync` rejects uploads whose client file name has a different extension, contains control characters, NUL or `:`. Names without an extension are still accepted. | DT-030 |
+| B3 | ZIP (OOXML) and OLE containers larger than 100 MB are rejected by all validator methods before format inspection. | DT-031 |
+| B4 | Path methods return `IsValid = false` for empty files, FIFOs, devices and other non-regular files instead of trying to read them. | DT-034 |
+| B5 | Exception and result messages changed to constant text (no file names, paths, entry names or exception text). Code that parsed messages must be updated. | DT-016, DT-033 |
+| B6 | Scanners (internal API): `GetPageAsync` returns the scan verdict with `Page = null` when a file is not clean; non-Office input to the Office scanner is rejected; encrypted and timed-out scans report `IsScanned = false`; `IsEncrypted` is reported for decryptable encrypted PDFs. | DT-017, DT-019, DT-025, DT-039 |
+| B7 | More files are flagged: macro-enabled content types, every external relationship with a non-web scheme or UNC target, remote frames/sub-documents, `/AA` anywhere in a PDF, multimedia/RichMedia/3D/Screen annotations, SubmitForm, appended ZIPs, encrypted Office files, deep or cyclic action chains, and any limit or parse failure. | DT-009..DT-027 |
+| B8 | Test project: `xunit` 2.9.3 / `xunit.runner.visualstudio` 2.8.2. Library: `FileSignatures` 7.3.0, `PdfPig` 0.1.16. | DT-028, DT-035, DT-036 |
+
+Recommendations (not implemented; additive or outside the library's scope):
+
+1. **Public content-scanning API (DT-040).** Expose the PDF/Office scanners through a public interface registered by
+   `AddDocuTrust`, and make the README explicit that `IDocuTrustFileValidator` only identifies file types.
+2. **Configurable limits.** Add a public options type (non-breaking) mapping to `OfficeScanLimits`/`PdfScanLimits`
+   and the validator's container limit, so consumers can tune 100/150 MB, the 256 MB budget, page/text caps and the
+   2-minute timeout.
+3. **Isolate parsing.** Run content scans in a separate worker process or container with memory/CPU limits: a stack
+   overflow or native crash inside a third-party parser cannot be caught in-process (see Residual risks).
+4. **Encrypted PDFs by policy.** Owner-password-only PDFs are decrypted and scanned (`IsEncrypted = true`,
+   `IsClean` from the scan). Deployments that want to reject all encryption should treat `IsEncrypted` as a reject.
+5. **Serving uploads.** Store files under server-generated names, serve them from a separate origin with
+   `Content-Disposition: attachment` and `X-Content-Type-Options: nosniff`: magic-byte validation cannot rule out
+   content-sniffing polyglots of other formats (e.g. PDF + HTML).
+6. **Supply chain.** Pin GitHub Actions to commit SHAs, enable Dependabot, and set `<NuGetAuditMode>all</NuGetAuditMode>`
+   so transitive advisories fail local builds as well as CI. Consider SDK 9.0.200+ (for `.slnx`) or add a `.sln`.
+7. **Legacy Office heuristics.** The keyword list (`Shell`, `Execute`, …) yields false positives on benign text and
+   cannot see compressed VBA source (MS-OVBA). A real VBA/BIFF parser (or an AV engine) would be more precise.
+8. **Further Office policy.** ActiveX controls, Excel data connections with `refreshOnLoad`, and RTF documents (currently
+   rejected as unsupported by the Office scanner) are not specifically analysed.
+9. **Clean-up.** `FileSize.MaxEmbeddedStreamSize` is unused since DT-021 and can be removed.
 
 ## Residual risks
 
-_To be completed as fixes land._
+- **Uncatchable failures in third-party parsers.** PdfPig, the OpenXML SDK, System.IO.Packaging and OpenMcdf (via
+  FileSignatures) parse hostile input in-process. A `StackOverflowException` or native crash terminates the host and
+  cannot be caught. DT-028/DT-035 remove the known cases; the raw pre-scan keeps obviously hostile PDFs away from
+  PdfPig; only process isolation (Recommendation 3) removes the class.
+- **Timeouts are cooperative.** The 2-minute budget is checked between steps. A single long synchronous call into
+  PdfPig (`PdfDocument.Open`, page parsing) or the OpenXML SDK cannot be interrupted mid-call.
+- **PDF parser differentials.** The structural walk sees the document as PdfPig parses it (lenient mode). Objects in
+  compressed object streams are only visible to that walk; the raw scan skips stream bodies, and a fake
+  `stream`…`endstream` region can blind the raw scan (the structural walk still applies). Objects reachable only
+  through skipped subtrees (`/Contents`, `/Resources`, fonts, `/StructTreeRoot`) are not walked because readers do not
+  execute actions found there.
+- **PDF false positives (fail closed).** The raw scan flags dangerous names anywhere outside stream bodies, so a benign
+  PDF that uses e.g. `/JS` or `/AA` as a resource name, or in a comment or string, is rejected.
+- **Dangling references** are recognised through PdfPig's exception message text. If a future PdfPig changes that
+  message, such PDFs fail closed (no fail-open).
+- **Decryptable encrypted PDFs:** strings and streams are encrypted, so the raw scan only sees dictionary keys; the
+  structural walk sees decrypted objects through PdfPig.
+- **Legacy Office:** detection is heuristic (keywords, stream names, encryption flags). XLM macros in BIFF8 `.xls`
+  are not parsed. The CFB reader's loop guards (visited sets, iteration caps) were reviewed but deliberately not
+  exercised with crafted cyclic files.
+- **ZIP:** .NET 8's `ZipArchive` truncates inflation at the declared size (verified on runtime 8.0.31). DocuTrust
+  does not rely on this: `BoundedReadStream` counts real bytes.
+- **Paths:** a local attacker who can swap a file between the `stat` and `open` calls (TOCTOU) can still present a
+  FIFO; symlinks are followed by design; traversal and UNC paths remain the caller's responsibility (documented).
+- **Type validation is not content validation:** `IDocuTrustFileValidator` identifies formats; it does not detect
+  macros, scripts or polyglots of other formats.
