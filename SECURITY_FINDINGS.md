@@ -53,7 +53,7 @@ Empirical probes run before the fixes (scratch program, not committed):
 | DT-018 | Scanners reuse one stream with `Position` resets (non-seekable streams crash) | Low | Fixed |
 | DT-019 | Undecryptable encrypted PDFs reported `IsClean = true` | High | Fixed |
 | DT-020 | PDF action chain: depth limit fails open; `/Next` arrays ignored | High | Fixed |
-| DT-021 | PDF objects that are streams with declared `/Length` > 25 MB are skipped | Medium | Open |
+| DT-021 | PDF objects that are streams with declared `/Length` > 25 MB are skipped | Medium | Fixed |
 | DT-022 | Missing PDF action types, annotation subtypes, form-field `/AA`, URI schemes | High | Open |
 | DT-023 | PDF objects off the hard-coded paths are never inspected; no raw-byte defense in depth | Medium | Open |
 | DT-024 | `#xx`-escaped PDF names bypass structural checks | Info | Open |
@@ -306,10 +306,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: src/DocuTrust/Core/Services/DocuTrustPdfScanner.cs:318-324 (`ResolveToDictionary`)
 - Description: When an indirect object is a stream whose dictionary declares `/Length` above 25 MB, `null` is returned and callers treat the object as benign. The check uses the attacker-declared length (PdfPig's lenient parser recovers the real end of stream), and the bytes are already loaded by `GetObject`, so the skip saves nothing.
 - Attack scenario / PoC: `3 0 obj << /S /JavaScript /JS (…) /Length 99999999 >> stream … endstream` as the `/OpenAction` target → clean.
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: `ResolveToDictionary` returns the stream dictionary whatever the declared `/Length` is. The skip saved nothing (PdfPig has already parsed the object when `GetObject` returns) and only made the object invisible to the checks.
+- Regression test: PdfOversizedObjectTests.Scan_ActionStoredAsStreamWithHugeDeclaredLength_IsDetected
+- Status: Fixed
+- Commit: `git log --grep "DT-021"`
 
 ### DT-022 — Missing PDF action types, annotation subtypes, form-field `/AA`, URI schemes
 - Severity: High

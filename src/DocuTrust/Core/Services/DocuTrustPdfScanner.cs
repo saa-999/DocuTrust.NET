@@ -351,14 +351,10 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
             {
                 var obj = pdf.Structure.GetObject(r.Data);
                 if (obj.Data is DictionaryToken dict) return dict;
+                // The stream bytes are already in memory once GetObject returns, and the declared /Length is
+                // attacker-controlled: always inspect the dictionary instead of skipping "large" objects.
                 if (obj.Data is StreamToken stream)
-                {
-                    if (stream.StreamDictionary.TryGet(NameToken.Length, out NumericToken len) && len.Long > FileSize.MaxEmbeddedStreamSize)
-                    {
-                        return null;
-                    }
                     return stream.StreamDictionary;
-                }
             }
         }
         catch (OperationCanceledException)
