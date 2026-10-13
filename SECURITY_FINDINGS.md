@@ -58,7 +58,7 @@ Empirical probes run before the fixes (scratch program, not committed):
 | DT-023 | PDF objects off the hard-coded paths are never inspected; no raw-byte defense in depth | Medium | Fixed |
 | DT-024 | `#xx`-escaped PDF names bypass structural checks | Info | Not an issue |
 | DT-025 | PDF `GetPageAsync` reports `IsClean = true` without a threat scan; file parsed 2–3 times | Medium | Fixed |
-| DT-026 | No PDF page-count, glyph or extracted-text limits | Medium | Open |
+| DT-026 | No PDF page-count, glyph or extracted-text limits | Medium | Fixed |
 | DT-027 | PDF/ZIP polyglots not detected | Low | Fixed |
 | DT-028 | PdfPig 0.1.14 has known infinite-recursion (stack overflow) bugs | High | Fixed |
 | DT-029 | Empty `expectedExtension` makes `ValidateFileAsync` accept any type, including executables | High | Open |
@@ -361,10 +361,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: src/DocuTrust/Core/Services/DocuTrustPdfScanner.cs:30-46, :53-61 (`GetPageAsync`)
 - Description: All pages are extracted into one `StringBuilder` without a page cap, a per-page glyph cap (nearest-neighbour word extraction is super-linear) or a total-character cap.
 - Attack scenario / PoC: a 150 MB PDF with tens of thousands of pages, or one page with millions of glyphs → CPU/memory exhaustion.
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: New `PdfScanLimits` (defaults in `FileSize`): whole-document extraction refuses PDFs with more than `MaxPdfPages` (5 000) pages; any extracted page with more than `MaxPdfLettersPerPage` (500 000) glyphs is refused before nearest-neighbour word extraction; total extracted text is capped at `MaxExtractedTextChars` (10 M chars). The structural walk is capped at `MaxPdfObjects` (200 000). All limits fail closed (`IsClean = false`, no text).
+- Regression test: PdfExtractionLimitTests.GetPage_AllPagesBeyondPageLimit_FailsClosed; PdfExtractionLimitTests.GetPage_PageBeyondGlyphLimit_FailsClosed (single page and all pages); PdfExtractionLimitTests.GetPage_TextBeyondCharacterLimit_FailsClosed (single page and all pages); PdfExtractionLimitTests.Scan_ObjectGraphBeyondLimit_FailsClosed; PdfExtractionLimitTests.GetPage_WithinDefaultLimits_IsClean
+- Status: Fixed
+- Commit: `git log --grep "DT-026"`
 
 ### DT-027 — PDF/ZIP polyglots not detected
 - Severity: Low

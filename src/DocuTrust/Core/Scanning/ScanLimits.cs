@@ -47,3 +47,17 @@ internal sealed class OfficeScanLimits
 
     public int MaxExtractedTextChars { get; init; } = FileSize.MaxExtractedTextChars;
 }
+
+/// <summary>Resource limits for PDF scanning and extraction. Defaults come from <see cref="FileSize"/>; tests may lower them.</summary>
+internal sealed class PdfScanLimits
+{
+    public static PdfScanLimits Default { get; } = new();
+
+    public int MaxPages { get; init; } = FileSize.MaxPdfPages;
+
+    public int MaxLettersPerPage { get; init; } = FileSize.MaxPdfLettersPerPage;
+
+    public int MaxExtractedTextChars { get; init; } = FileSize.MaxExtractedTextChars;
+
+    public int MaxObjects { get; init; } = FileSize.MaxPdfObjects;
+}

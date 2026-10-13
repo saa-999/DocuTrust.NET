@@ -17,14 +17,20 @@ namespace DocuTrust.Core.Services;
 internal class DocuTrustPdfScanner : IDocuTrustContentFile
 {
     private readonly ArrayPool<byte> _bufferPool;
+    private readonly PdfScanLimits _limits;
 
-    public DocuTrustPdfScanner() : this(ArrayPool<byte>.Shared)
+    public DocuTrustPdfScanner() : this(ArrayPool<byte>.Shared, PdfScanLimits.Default)
     {
     }
 
-    internal DocuTrustPdfScanner(ArrayPool<byte> bufferPool)
+    internal DocuTrustPdfScanner(ArrayPool<byte> bufferPool) : this(bufferPool, PdfScanLimits.Default)
+    {
+    }
+
+    internal DocuTrustPdfScanner(ArrayPool<byte> bufferPool, PdfScanLimits limits)
     {
         _bufferPool = bufferPool;
+        _limits = limits;
     }
 
     /// <summary>
@@ -124,19 +130,28 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
 
         // Every object reachable from the catalog (pages, annotations, outlines, name trees, fields, objects in
         // compressed object streams) — without parsing page content streams.
-        return PdfStructureWalker.FindThreat(pdf, token);
+        return PdfStructureWalker.FindThreat(pdf, token, _limits.MaxObjects);
     }
 
-    private static DocuTrustFileCheckResult ExtractText(PdfDocument pdf, int pageNumber, int allPages, CancellationToken token)
+    /// <summary>Extracts words with limits on page count, glyphs per page and total characters (all fail closed).</summary>
+    private DocuTrustFileCheckResult ExtractText(PdfDocument pdf, int pageNumber, int allPages, CancellationToken token)
     {
         if (allPages != 0 || pageNumber == 0)
         {
+            if (pdf.NumberOfPages > _limits.MaxPages)
+                return LimitExceeded("PDF exceeds the page-count limit for text extraction.");
+
             var allText = new StringBuilder();
             foreach (var page in pdf.GetPages())
             {
                 token.ThrowIfCancellationRequested();
+                if (page.Letters.Count > _limits.MaxLettersPerPage)
+                    return LimitExceeded("PDF page exceeds the glyph limit for text extraction.");
+
                 var words = page.GetWords(NearestNeighbourWordExtractor.Instance);
                 allText.AppendLine(string.Join(" ", words.Select(w => w.Text)));
+                if (allText.Length > _limits.MaxExtractedTextChars)
+                    return LimitExceeded("Extracted text exceeds the safety size limit.");
             }
             return new DocuTrustFileCheckResult { IsClean = true, IsEncrypted = pdf.IsEncrypted, Page = allText.ToString(), Message = "Extracted all pages.", IsScanned = true };
         }
@@ -145,9 +160,18 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
         if (pageNumber > pdf.NumberOfPages || pageNumber < 1)
             return new DocuTrustFileCheckResult { IsClean = false, Message = "Requested page index out of range.", IsScanned = true };
 
-        var single = pdf.GetPage(pageNumber).GetWords(NearestNeighbourWordExtractor.Instance);
-        return new DocuTrustFileCheckResult { IsClean = true, IsEncrypted = pdf.IsEncrypted, Page = string.Join(" ", single.Select(w => w.Text)), Message = $"Extracted page {pageNumber}.", IsScanned = true };
+        var single = pdf.GetPage(pageNumber);
+        if (single.Letters.Count > _limits.MaxLettersPerPage)
+            return LimitExceeded("PDF page exceeds the glyph limit for text extraction.");
+
+        var text = string.Join(" ", single.GetWords(NearestNeighbourWordExtractor.Instance).Select(w => w.Text));
+        if (text.Length > _limits.MaxExtractedTextChars)
+            return LimitExceeded("Extracted text exceeds the safety size limit.");
+
+        return new DocuTrustFileCheckResult { IsClean = true, IsEncrypted = pdf.IsEncrypted, Page = text, Message = $"Extracted page {pageNumber}.", IsScanned = true };
     }
+
+    private static DocuTrustFileCheckResult LimitExceeded(string message) => new() { IsClean = false, Message = message, IsScanned = true };
 
     private async Task<DocuTrustFileCheckResult?> RawScanAsync(IFormFile file, CancellationToken token)
     {

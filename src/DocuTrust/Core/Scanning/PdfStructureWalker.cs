@@ -12,7 +12,6 @@ namespace DocuTrust.Core.Scanning;
 /// </summary>
 internal static class PdfStructureWalker
 {
-    internal const int DefaultMaxObjects = 200_000;
     private const int MaxInlineDepth = 64;
 
     // Subtrees that cannot hold actions (content streams, fonts, images, tagged-structure trees) are not followed:
@@ -23,7 +22,7 @@ internal static class PdfStructureWalker
         "FontFile", "FontFile2", "FontFile3", "ToUnicode", "CIDToGIDMap",
     };
 
-    public static string? FindThreat(PdfDocument pdf, CancellationToken token, int maxObjects = DefaultMaxObjects)
+    public static string? FindThreat(PdfDocument pdf, CancellationToken token, int maxObjects)
     {
         var visited = new HashSet<IndirectReference>();
         var pending = new Stack<(IToken Token, int Depth)>();

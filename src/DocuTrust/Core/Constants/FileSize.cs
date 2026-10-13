@@ -23,5 +23,14 @@ internal static class FileSize
 
     /// <summary>Most characters text extraction returns before failing closed (about 20 MB of UTF-16).</summary>
     public const int MaxExtractedTextChars = 10_000_000;
+
+    /// <summary>Most pages a PDF may have for whole-document text extraction.</summary>
+    public const int MaxPdfPages = 5_000;
+
+    /// <summary>Most glyphs on one PDF page before word extraction (super-linear in glyph count) is refused.</summary>
+    public const int MaxPdfLettersPerPage = 500_000;
+
+    /// <summary>Most indirect objects the structural PDF walk visits before failing closed.</summary>
+    public const int MaxPdfObjects = 200_000;
     
 }
