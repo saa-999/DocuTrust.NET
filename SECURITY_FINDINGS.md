@@ -52,7 +52,7 @@ Empirical probes run before the fixes (scratch program, not committed):
 | DT-017 | Office `GetPageAsync` reports `IsClean = true` without scanning; swallows parse errors | Medium | Fixed |
 | DT-018 | Scanners reuse one stream with `Position` resets (non-seekable streams crash) | Low | Fixed |
 | DT-019 | Undecryptable encrypted PDFs reported `IsClean = true` | High | Fixed |
-| DT-020 | PDF action chain: depth limit fails open; `/Next` arrays ignored | High | Open |
+| DT-020 | PDF action chain: depth limit fails open; `/Next` arrays ignored | High | Fixed |
 | DT-021 | PDF objects that are streams with declared `/Length` > 25 MB are skipped | Medium | Open |
 | DT-022 | Missing PDF action types, annotation subtypes, form-field `/AA`, URI schemes | High | Open |
 | DT-023 | PDF objects off the hard-coded paths are never inspected; no raw-byte defense in depth | Medium | Open |
@@ -295,10 +295,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: src/DocuTrust/Core/Services/DocuTrustPdfScanner.cs:213, :238-241 (`IsActionMalicious`)
 - Description: Past `MaxNestingDepth` (15) the method returns `false` ("not malicious"). `/Next` may be a single action or an **array** of actions (ISO 32000-1 §12.6.2); an array resolves to `null` and is ignored. There is no visited set (cycles rely on the fail-open depth limit).
 - Attack scenario / PoC: `/OpenAction << /S /GoTo /D [...] /Next [ 5 0 R ] >>` with object 5 a JavaScript action, or a chain of 16 `GoTo` actions ending in JavaScript → clean.
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: `IsActionMalicious` is now iterative with an explicit stack and a visited set of indirect references. `/Next` is followed whether it is a single action or an array of actions. Exceeding `FileSize.MaxNestingDepth` or revisiting an object (a cycle) now returns malicious (fail closed) instead of `false`.
+- Regression test: PdfActionChainTests.Scan_JavaScriptInNextArray_IsDetected; PdfActionChainTests.Scan_JavaScriptBeyondDepthLimit_FailsClosed; PdfActionChainTests.Scan_CyclicActionChain_FailsClosedAndTerminates; PdfActionChainTests.Scan_ShortBenignActionChain_IsClean (no false positive)
+- Status: Fixed
+- Commit: `git log --grep "DT-020"`
 
 ### DT-021 — PDF objects that are streams with declared `/Length` > 25 MB are skipped
 - Severity: Medium

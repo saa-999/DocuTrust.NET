@@ -179,7 +179,7 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
         message = string.Empty;
         if (catalog.TryGet(NameToken.OpenAction, out IToken? openAction))
         {
-            if (IsActionMalicious(openAction, pdf, out message, 0, token))
+            if (IsActionMalicious(openAction, pdf, out message, token))
             {
                 message = $"Malicious OpenAction: {message}";
                 return true;
@@ -210,38 +210,70 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
         return false;
     }
 
-    private bool IsActionMalicious(IToken token, PdfDocument pdf, out string message, int depth, CancellationToken cancellationToken)
+    /// <summary>
+    /// Walks an action and its <c>/Next</c> chain (a single action or an array of actions, ISO 32000-1 §12.6.2)
+    /// iteratively. Exceeding the depth limit or revisiting an object (a cycle) is treated as malicious.
+    /// </summary>
+    private bool IsActionMalicious(IToken root, PdfDocument pdf, out string message, CancellationToken cancellationToken)
     {
-        cancellationToken.ThrowIfCancellationRequested();
         message = string.Empty;
-        if (depth > FileSize.MaxNestingDepth) return false;
+        var pending = new Stack<(IToken Token, int Depth)>();
+        var visited = new HashSet<UglyToad.PdfPig.Core.IndirectReference>();
+        pending.Push((root, 0));
 
-        var actionDict = ResolveToDictionary(token, pdf, cancellationToken);
-        if (actionDict == null) return false;
-
-        if (actionDict.TryGet(NameToken.S, out NameToken s))
+        while (pending.Count > 0)
         {
-            string actionType = s.Data;
-            if (actionType == "JavaScript" || actionType == "JS")
-            {
-                message = "Embedded JavaScript detected.";
-                return true;
-            }
-            if (actionType == "Launch")
-            {
-                message = "External process launch command (/Launch) detected.";
-                return true;
-            }
-            if (actionType == "GoToR" || actionType == "ImportData")
-            {
-                message = $"Remote resource action (/{actionType}) detected.";
-                return true;
-            }
-        }
+            cancellationToken.ThrowIfCancellationRequested();
+            var (current, depth) = pending.Pop();
 
-        if (actionDict.TryGet(NameToken.Create("Next"), out IToken? next))
-        {
-            return IsActionMalicious(next, pdf, out message, depth + 1, cancellationToken);
+            if (depth > FileSize.MaxNestingDepth)
+            {
+                message = "Action chain exceeds the maximum nesting depth.";
+                return true;
+            }
+
+            if (current is IndirectReferenceToken reference && !visited.Add(reference.Data))
+            {
+                message = "Cyclic action chain detected.";
+                return true;
+            }
+
+            var actionDict = ResolveToDictionary(current, pdf, cancellationToken);
+            if (actionDict == null)
+                continue;
+
+            if (actionDict.TryGet(NameToken.S, out NameToken s))
+            {
+                string actionType = s.Data;
+                if (actionType == "JavaScript" || actionType == "JS")
+                {
+                    message = "Embedded JavaScript detected.";
+                    return true;
+                }
+                if (actionType == "Launch")
+                {
+                    message = "External process launch command (/Launch) detected.";
+                    return true;
+                }
+                if (actionType == "GoToR" || actionType == "ImportData")
+                {
+                    message = $"Remote resource action (/{actionType}) detected.";
+                    return true;
+                }
+            }
+
+            if (actionDict.TryGet(NameToken.Create("Next"), out IToken? next))
+            {
+                if (next is ArrayToken nextActions)
+                {
+                    foreach (var item in nextActions.Data)
+                        pending.Push((item, depth + 1));
+                }
+                else
+                {
+                    pending.Push((next, depth + 1));
+                }
+            }
         }
 
         return false;
@@ -281,7 +313,7 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
                 var annot = ResolveToDictionary(item, pdf, cancellationToken);
                 if (annot == null) continue;
 
-                if (annot.TryGet(NameToken.A, out IToken? action) && IsActionMalicious(action, pdf, out message, 0, cancellationToken)) return true;
+                if (annot.TryGet(NameToken.A, out IToken? action) && IsActionMalicious(action, pdf, out message, cancellationToken)) return true;
                 if (annot.TryGet(NameToken.Create("AA"), out _))
                 {
                     message = "Annotation with automatic trigger (/AA) detected.";
