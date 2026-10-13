@@ -49,7 +49,7 @@ Empirical probes run before the fixes (scratch program, not committed):
 | DT-014 | Every OOXML package is inspected as Word (Excel/PowerPoint branches dead) | Low | Fixed |
 | DT-015 | Encrypted Office documents (legacy and CFB-wrapped OOXML) reported clean | High | Fixed |
 | DT-016 | Office results echo `ex.Message` and ZIP entry names (disclosure, log injection) | Medium | Fixed |
-| DT-017 | Office `GetPageAsync` reports `IsClean = true` without scanning; swallows parse errors | Medium | Open |
+| DT-017 | Office `GetPageAsync` reports `IsClean = true` without scanning; swallows parse errors | Medium | Fixed |
 | DT-018 | Scanners reuse one stream with `Position` resets (non-seekable streams crash) | Low | Fixed |
 | DT-019 | Undecryptable encrypted PDFs reported `IsClean = true` | High | Open |
 | DT-020 | PDF action chain: depth limit fails open; `/Next` arrays ignored | High | Open |
@@ -262,10 +262,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: src/DocuTrust/Core/Services/DocuTrustOfficeScanner.cs:29-62, :329-409, :411-444
 - Description: Text extraction returns `IsClean = true` for any input. Macro-laden documents, non-Office binaries routed to the "legacy" path, and packages that no SDK type can open (`catch { }` everywhere, empty text) are all reported clean. Combined with DT-009 (no size checks), extraction is also the easiest DoS path.
 - Attack scenario / PoC: `GetPageAsync` on a `.docm` with VBA → `IsClean = true`; on an `.exe` → `IsClean = true` with "strings".
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: `GetPageAsync` now runs the complete scan (`ScanCoreAsync`, shared with `ScanFileContentAsync`) first and returns the scan verdict without text when the document is not clean, so `IsClean = true` from extraction always means scanned and clean. Inputs that are neither OLE/CFB nor OOXML are rejected instead of having bytes extracted as strings. OOXML text is streamed from the body parts with `SafeXml` (no DOM, no `InnerText`), in document order (`sheet`/`sldId` relationship ids), skipping non-worksheet sheets such as chartsheets instead of throwing. All `catch { }` blocks are gone: any parse error is fail-closed. Extraction is capped at `FileSize.MaxExtractedTextChars` (10 M chars) for OOXML and legacy files; exceeding it is fail-closed.
+- Regression test: OfficeTextExtractionTests (7 cases: macro-enabled document and legacy macro indicator are not clean and return no text, non-Office binary fails closed, clean document returns text, OOXML and legacy text caps fail closed, workbook with a chartsheet still extracts worksheet text)
+- Status: Fixed
+- Commit: `git log --grep "DT-017"`
 
 ### DT-018 — Scanners reuse one stream with `Position` resets (non-seekable streams crash)
 - Severity: Low

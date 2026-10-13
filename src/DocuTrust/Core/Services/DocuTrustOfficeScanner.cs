@@ -1,13 +1,9 @@
 using System.Buffers;
-using System.IO.Compression;
 using System.Text;
 using System.Xml;
 using Microsoft.AspNetCore.Http;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
-using DocumentFormat.OpenXml.Wordprocessing;
-using DocumentFormat.OpenXml.Spreadsheet;
-using DocumentFormat.OpenXml.Presentation;
 using DocuTrust.Core.Abstractions;
 using DocuTrust.Core.Models;
 using DocuTrust.Core.Constants;
@@ -19,8 +15,11 @@ namespace DocuTrust.Core.Services;
 
 internal class DocuTrustOfficeScanner : IDocuTrustContentFile
 {
-
     private const string OleNativeStreamName = "\u0001Ole10Native";
+
+    // Password-protected OOXML is a CFB holding these two streams; the content itself is ciphertext.
+    private const string EncryptedPackageStreamName = "EncryptedPackage";
+    private const string EncryptionInfoStreamName = "EncryptionInfo";
 
     private static readonly KeywordSet LegacyIndicators = new(
     [
@@ -31,17 +30,7 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
         EncryptedPackageStreamName, EncryptionInfoStreamName
     ]);
 
-    // Password-protected OOXML is a CFB holding these two streams; the content itself is ciphertext.
-    private const string EncryptedPackageStreamName = "EncryptedPackage";
-    private const string EncryptionInfoStreamName = "EncryptionInfo";
-
-    private static DocuTrustFileCheckResult EncryptedResult() => new()
-    {
-        IsClean = false,
-        IsEncrypted = true,
-        IsScanned = false,
-        Message = "Encrypted (password-protected) Office document: content cannot be scanned.",
-    };
+    private static ReadOnlySpan<byte> CfbMagic => [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
 
     private readonly ArrayPool<byte> _bufferPool;
     private readonly OfficeScanLimits _limits;
@@ -60,29 +49,21 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
         _limits = limits;
     }
 
-
+    /// <summary>
+    /// Extracts text. The full security scan runs first: a document that is not clean is returned as the scan
+    /// verdict (no text), so <c>IsClean = true</c> here always means "scanned and clean".
+    /// </summary>
     public async Task<DocuTrustFileCheckResult> GetPageAsync(int pageNumber, int allPages, IFormFile file, CancellationToken token = default)
     {
         token.ThrowIfCancellationRequested();
         try
         {
-            if (file.Length > FileSize.MaxFileSizeBytes)
-            {
-                return new DocuTrustFileCheckResult { IsClean = false, Message = "File exceeds security size limits.", IsScanned = true };
-            }
+            var (scan, container, kind) = await ScanCoreAsync(file, token);
+            if (!scan.IsClean)
+                return scan;
 
-            // Every pass opens a fresh stream from the IFormFile: no Position resets, works for non-seekable streams.
-            byte[] header = await ReadHeaderAsync(file, 4, token);
-
-            if (header.Length == 4 && header[0] == 0x50 && header[1] == 0x4B && header[2] == 0x03 && header[3] == 0x04)
-            {
-                // Enforce real decompressed sizes before the SDK loads any part into a DOM.
-                var (failure, kind) = await InspectPackageAsync(file, token);
-                if (failure != null)
-                    return failure;
-
+            if (container == OfficeContainer.Package)
                 return ExtractModernText(file, kind, token);
-            }
 
             using var stream = file.OpenReadStream();
             return await ExtractLegacyTextAsync(stream, token);
@@ -102,32 +83,7 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
         token.ThrowIfCancellationRequested();
         try
         {
-            if (file.Length > FileSize.MaxFileSizeBytes)
-            {
-                return new DocuTrustFileCheckResult { IsClean = false, Message = "File exceeds security scan size limit.", IsScanned = true };
-            }
-
-            byte[] header = await ReadHeaderAsync(file, 8, token);
-
-            if (header.AsSpan().SequenceEqual(new byte[] { 0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1 }))
-            {
-                // Encryption flags of .doc/.xls/.ppt and encrypted OOXML need random access to the CFB structure.
-                using (var cfb = file.OpenReadStream())
-                {
-                    if (CompoundFileInspector.Inspect(cfb) == CompoundFileVerdict.Encrypted)
-                        return EncryptedResult();
-                }
-
-                using var stream = file.OpenReadStream();
-                return await ScanLegacyOfficeAsync(stream, token);
-            }
-
-            if (header.Length >= 4 && header[0] == 0x50 && header[1] == 0x4B && (header[2] == 0x03 || header[2] == 0x01))
-            {
-                return await ScanModernOfficeAsync(file, token);
-            }
-
-            return new DocuTrustFileCheckResult { IsClean = false, Message = "Unsupported or malformed Office format.", IsScanned = true };
+            return (await ScanCoreAsync(file, token)).Result;
         }
         catch (OperationCanceledException)
         {
@@ -139,6 +95,46 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
         }
     }
 
+    private async Task<(DocuTrustFileCheckResult Result, OfficeContainer Container, OfficeDocumentKind Kind)> ScanCoreAsync(IFormFile file, CancellationToken token)
+    {
+        if (file.Length > FileSize.MaxFileSizeBytes)
+            return (Fail("File exceeds security scan size limit."), OfficeContainer.Unsupported, OfficeDocumentKind.Unknown);
+
+        // Every pass opens a fresh stream from the IFormFile: no Position resets, works for non-seekable streams.
+        byte[] header = await ReadHeaderAsync(file, 8, token);
+
+        if (header.AsSpan().SequenceEqual(CfbMagic))
+        {
+            // Encryption flags of .doc/.xls/.ppt and encrypted OOXML need random access to the CFB structure.
+            using (var cfb = file.OpenReadStream())
+            {
+                if (CompoundFileInspector.Inspect(cfb) == CompoundFileVerdict.Encrypted)
+                    return (EncryptedResult(), OfficeContainer.Compound, OfficeDocumentKind.Unknown);
+            }
+
+            using var stream = file.OpenReadStream();
+            return (await ScanLegacyOfficeAsync(stream, token), OfficeContainer.Compound, OfficeDocumentKind.Unknown);
+        }
+
+        if (header.Length >= 4 && header[0] == 0x50 && header[1] == 0x4B && (header[2] == 0x03 || header[2] == 0x01))
+        {
+            var (result, kind) = await ScanModernOfficeAsync(file, token);
+            return (result, OfficeContainer.Package, kind);
+        }
+
+        return (Fail("Unsupported or malformed Office format."), OfficeContainer.Unsupported, OfficeDocumentKind.Unknown);
+    }
+
+    private static DocuTrustFileCheckResult Fail(string message) => new() { IsClean = false, Message = message, IsScanned = true };
+
+    private static DocuTrustFileCheckResult EncryptedResult() => new()
+    {
+        IsClean = false,
+        IsEncrypted = true,
+        IsScanned = false,
+        Message = "Encrypted (password-protected) Office document: content cannot be scanned.",
+    };
+
     private static async Task<byte[]> ReadHeaderAsync(IFormFile file, int count, CancellationToken token)
     {
         using var stream = file.OpenReadStream();
@@ -147,60 +143,44 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
         return read == count ? header : header[..read];
     }
 
-    private async Task<(DocuTrustFileCheckResult? Failure, OfficeDocumentKind Kind)> InspectPackageAsync(IFormFile file, CancellationToken token)
-    {
-        using var stream = file.OpenReadStream();
-
-        // ZipArchive needs random access to the central directory; fail closed instead of throwing.
-        if (!stream.CanSeek)
-            return (new DocuTrustFileCheckResult { IsClean = false, Message = "Office package scanning requires a seekable stream.", IsScanned = false }, OfficeDocumentKind.Unknown);
-
-        var verdict = await new OfficePackageInspector(_bufferPool, _limits).InspectAsync(stream, token);
-        return verdict.Threat == null
-            ? (null, verdict.Kind)
-            : (new DocuTrustFileCheckResult { IsClean = false, Message = verdict.Threat, IsScanned = true }, verdict.Kind);
-    }
-
-    private async Task<DocuTrustFileCheckResult> ScanModernOfficeAsync(IFormFile file, CancellationToken token)
+    private async Task<(DocuTrustFileCheckResult Result, OfficeDocumentKind Kind)> ScanModernOfficeAsync(IFormFile file, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
 
-        var (failure, kind) = await InspectPackageAsync(file, token);
-        if (failure != null)
-            return failure;
-
-        var settings = new OpenSettings
+        OfficePackageVerdict verdict;
+        using (var stream = file.OpenReadStream())
         {
-            AutoSave = false,
-            MarkupCompatibilityProcessSettings = new MarkupCompatibilityProcessSettings(
-                MarkupCompatibilityProcessMode.NoProcess,
-                FileFormatVersions.Microsoft365
-            )
-        };
+            // ZipArchive needs random access to the central directory; fail closed instead of throwing.
+            if (!stream.CanSeek)
+                return (new DocuTrustFileCheckResult { IsClean = false, Message = "Office package scanning requires a seekable stream.", IsScanned = false }, OfficeDocumentKind.Unknown);
+
+            verdict = await new OfficePackageInspector(_bufferPool, _limits).InspectAsync(stream, token);
+        }
+
+        if (verdict.Threat != null)
+            return (Fail(verdict.Threat), verdict.Kind);
 
         try
         {
-            // Open exactly the document type the package declares; any failure is fail-closed below.
+            // The first pass already checked every part's content types, relationships, field codes and embedded
+            // payloads. Opening exactly the declared SDK type confirms the package parses as that type.
             using var stream = file.OpenReadStream();
-            switch (kind)
+            using OpenXmlPackage document = verdict.Kind switch
             {
-                case OfficeDocumentKind.Word:
-                    using (var doc = WordprocessingDocument.Open(stream, false, settings))
-                        return InspectWord(doc, token);
-                case OfficeDocumentKind.Excel:
-                    using (var doc = SpreadsheetDocument.Open(stream, false, settings))
-                        return InspectExcel(doc, token);
-                case OfficeDocumentKind.PowerPoint:
-                    using (var doc = PresentationDocument.Open(stream, false, settings))
-                        return InspectPowerPoint(doc, token);
-                default:
-                    return new DocuTrustFileCheckResult
-                    {
-                        IsClean = false,
-                        Message = "File format unrecognized or structurally invalid for Office documents",
-                        IsScanned = true
-                    };
-            }
+                OfficeDocumentKind.Word => WordprocessingDocument.Open(stream, false, OpenSettings()),
+                OfficeDocumentKind.Excel => SpreadsheetDocument.Open(stream, false, OpenSettings()),
+                OfficeDocumentKind.PowerPoint => PresentationDocument.Open(stream, false, OpenSettings()),
+                _ => throw new InvalidDataException(),
+            };
+            token.ThrowIfCancellationRequested();
+
+            var message = verdict.Kind switch
+            {
+                OfficeDocumentKind.Word => "Word document is clean.",
+                OfficeDocumentKind.Excel => "Excel document is clean.",
+                _ => "PowerPoint document is clean.",
+            };
+            return (new DocuTrustFileCheckResult { IsClean = true, Message = message, IsScanned = true }, verdict.Kind);
         }
         catch (OperationCanceledException)
         {
@@ -209,33 +189,17 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
         catch (Exception)
         {
             // Exception text (part URIs, parser internals) is never copied into the result.
-            return new DocuTrustFileCheckResult { IsClean = false, Message = "Structural deep scan failed: the package is not a valid document of its declared type.", IsScanned = true };
+            return (Fail("Structural deep scan failed: the package is not a valid document of its declared type."), verdict.Kind);
         }
     }
 
-    // The first pass (OfficePackageInspector) already checked every part's content types, relationships, field
-    // codes and embedded payloads. Opening the matching SDK type here confirms the package parses as that type;
-    // any failure is treated as not-clean by the caller.
-    private static DocuTrustFileCheckResult InspectWord(WordprocessingDocument doc, CancellationToken token)
+    private static OpenSettings OpenSettings() => new()
     {
-        token.ThrowIfCancellationRequested();
-        _ = doc.MainDocumentPart;
-        return new DocuTrustFileCheckResult { IsClean = true, Message = "Word document is clean.", IsScanned = true };
-    }
-
-    private static DocuTrustFileCheckResult InspectExcel(SpreadsheetDocument doc, CancellationToken token)
-    {
-        token.ThrowIfCancellationRequested();
-        _ = doc.WorkbookPart;
-        return new DocuTrustFileCheckResult { IsClean = true, Message = "Excel document is clean.", IsScanned = true };
-    }
-
-    private static DocuTrustFileCheckResult InspectPowerPoint(PresentationDocument doc, CancellationToken token)
-    {
-        token.ThrowIfCancellationRequested();
-        _ = doc.PresentationPart;
-        return new DocuTrustFileCheckResult { IsClean = true, Message = "PowerPoint document is clean.", IsScanned = true };
-    }
+        AutoSave = false,
+        MarkupCompatibilityProcessSettings = new MarkupCompatibilityProcessSettings(
+            MarkupCompatibilityProcessMode.NoProcess,
+            FileFormatVersions.Microsoft365),
+    };
 
     private async Task<DocuTrustFileCheckResult> ScanLegacyOfficeAsync(Stream stream, CancellationToken token)
     {
@@ -253,96 +217,67 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
             token).ConfigureAwait(false);
 
         if (read.LimitExceeded)
-            return new DocuTrustFileCheckResult { IsClean = false, Message = "File exceeds security scan size limit.", IsScanned = true };
+            return Fail("File exceeds security scan size limit.");
 
         if (indicator is EncryptedPackageStreamName or EncryptionInfoStreamName)
             return EncryptedResult();
 
         if (indicator == OleNativeStreamName)
-            return new DocuTrustFileCheckResult { IsClean = false, Message = "Legacy file contains embedded OLE objects.", IsScanned = true };
+            return Fail("Legacy file contains embedded OLE objects.");
 
         if (indicator != null)
-            return new DocuTrustFileCheckResult { IsClean = false, Message = $"Legacy malicious indicator detected: '{indicator}'.", IsScanned = true };
+            return Fail($"Legacy malicious indicator detected: '{indicator}'.");
 
         return new DocuTrustFileCheckResult { IsClean = true, Message = "Legacy heuristics passed.", IsScanned = true };
     }
 
+    /// <summary>
+    /// Streams the text nodes of the body parts (no DOM) with a character cap. Any parse error fails closed.
+    /// </summary>
     private DocuTrustFileCheckResult ExtractModernText(IFormFile file, OfficeDocumentKind kind, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
-        var sb = new StringBuilder();
+        var text = new StringBuilder();
         try
         {
-            if (kind == OfficeDocumentKind.Word)
+            using var stream = file.OpenReadStream();
+            switch (kind)
             {
-                try
+                case OfficeDocumentKind.Word:
                 {
-                using var stream = file.OpenReadStream();
-                using var doc = WordprocessingDocument.Open(stream, false);
-                if (doc.MainDocumentPart?.Document?.Body != null)
-                {
-                    token.ThrowIfCancellationRequested();
-                    var text = doc.MainDocumentPart.Document.Body.InnerText;
-                    if (!string.IsNullOrEmpty(text)) sb.Append(text);
+                    using var doc = WordprocessingDocument.Open(stream, false, OpenSettings());
+                    if (doc.MainDocumentPart is { } main && !AppendText(main, text, token))
+                        return TextLimitExceeded();
+                    break;
                 }
-            }
-                catch (OperationCanceledException) { throw; }
-                catch { }
-            }
-
-            if (kind == OfficeDocumentKind.Excel)
-            {
-                try
+                case OfficeDocumentKind.Excel:
                 {
-                    using var stream = file.OpenReadStream();
-                using var doc = SpreadsheetDocument.Open(stream, false);
-                    var workbookPart = doc.WorkbookPart;
-                    var sheets = workbookPart?.Workbook?.Sheets;
-                    if (sheets != null && workbookPart != null)
+                    using var doc = SpreadsheetDocument.Open(stream, false, OpenSettings());
+                    var workbook = doc.WorkbookPart;
+                    foreach (var sheetId in ReadRelationshipIds(workbook, "sheet", token))
                     {
-                        foreach (var sheet in sheets.Cast<Sheet>())
-                        {
-                            token.ThrowIfCancellationRequested();
-                            if (sheet.Id != null)
-                            {
-                                var worksheetPart = (WorksheetPart)workbookPart.GetPartById(sheet.Id!);
-                                var text = worksheetPart.Worksheet?.InnerText;
-                                if (!string.IsNullOrEmpty(text)) sb.Append(text);
-                            }
-                        }
+                        // Chartsheets and dialog sheets have no cell text; skip them instead of failing.
+                        if (workbook!.GetPartById(sheetId) is WorksheetPart sheet && !AppendText(sheet, text, token))
+                            return TextLimitExceeded();
                     }
+                    break;
                 }
-                catch (OperationCanceledException) { throw; }
-                catch { }
-            }
-
-            if (kind == OfficeDocumentKind.PowerPoint)
-            {
-                try
+                case OfficeDocumentKind.PowerPoint:
                 {
-                    using var stream = file.OpenReadStream();
-                using var doc = PresentationDocument.Open(stream, false);
-                    var presentationPart = doc.PresentationPart;
-                    var slides = presentationPart?.Presentation?.SlideIdList;
-                    if (slides != null && presentationPart != null)
+                    using var doc = PresentationDocument.Open(stream, false, OpenSettings());
+                    var presentation = doc.PresentationPart;
+                    foreach (var slideId in ReadRelationshipIds(presentation, "sldId", token))
                     {
-                        foreach (var slideId in slides.Cast<SlideId>())
-                        {
-                            token.ThrowIfCancellationRequested();
-                            if (slideId.RelationshipId != null)
-                            {
-                                var slidePart = (SlidePart)presentationPart.GetPartById(slideId.RelationshipId!);
-                                var text = slidePart.Slide?.InnerText;
-                                if (!string.IsNullOrEmpty(text)) sb.Append(text);
-                            }
-                        }
+                        if (presentation!.GetPartById(slideId) is SlidePart slide && !AppendText(slide, text, token))
+                            return TextLimitExceeded();
                     }
+                    break;
                 }
-                catch (OperationCanceledException) { throw; }
-                catch { }
+                default:
+                    return Fail("Text extraction failed: the document could not be parsed.");
             }
 
-            return new DocuTrustFileCheckResult { IsClean = true, Page = sb.ToString(), Message = "Text extracted from OpenXML format.", IsScanned = true };
+            return new DocuTrustFileCheckResult { IsClean = true, Page = text.ToString(), Message = "Text extracted from OpenXML format.", IsScanned = true };
         }
         catch (OperationCanceledException)
         {
@@ -350,16 +285,61 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
         }
         catch (Exception)
         {
-            return new DocuTrustFileCheckResult { IsClean = false, Message = "Text extraction failed: the document could not be parsed.", IsScanned = true };
+            return Fail("Text extraction failed: the document could not be parsed.");
         }
-    
     }
+
+    /// <summary>Reads the <c>r:id</c> of each <paramref name="elementName"/> in a main part, in document order.</summary>
+    private static List<string> ReadRelationshipIds(OpenXmlPart? part, string elementName, CancellationToken token)
+    {
+        var ids = new List<string>();
+        if (part == null)
+            return ids;
+
+        using var partStream = part.GetStream(FileMode.Open, FileAccess.Read);
+        using var reader = SafeXml.Create(partStream);
+        while (reader.Read())
+        {
+            token.ThrowIfCancellationRequested();
+            if (reader.NodeType != XmlNodeType.Element || reader.LocalName != elementName)
+                continue;
+            for (bool more = reader.MoveToFirstAttribute(); more; more = reader.MoveToNextAttribute())
+            {
+                if (reader.LocalName == "id" && reader.NamespaceURI.EndsWith("/relationships", StringComparison.Ordinal))
+                    ids.Add(reader.Value);
+            }
+            reader.MoveToElement();
+        }
+        return ids;
+    }
+
+    /// <summary>Appends every text node of the part. Returns false when the extraction cap is exceeded.</summary>
+    private bool AppendText(OpenXmlPart part, StringBuilder text, CancellationToken token)
+    {
+        using var partStream = part.GetStream(FileMode.Open, FileAccess.Read);
+        using var reader = SafeXml.Create(partStream);
+        while (reader.Read())
+        {
+            token.ThrowIfCancellationRequested();
+            if (reader.NodeType is XmlNodeType.Text or XmlNodeType.CDATA or XmlNodeType.SignificantWhitespace)
+            {
+                text.Append(reader.Value);
+                if (text.Length > _limits.MaxExtractedTextChars)
+                    return false;
+            }
+        }
+        return true;
+    }
+
+    private static DocuTrustFileCheckResult TextLimitExceeded()
+        => Fail("Extracted text exceeds the safety size limit.");
 
     private async Task<DocuTrustFileCheckResult> ExtractLegacyTextAsync(Stream stream, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
 
         var sb = new StringBuilder();
+        bool tooLong = false;
         var read = await PooledChunkReader.ReadAsync(
             stream,
             _bufferPool,
@@ -374,15 +354,23 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
                     if (char.IsLetterOrDigit(c) || char.IsPunctuation(c) || char.IsWhiteSpace(c))
                         sb.Append(c);
                 }
-                return false;
+                tooLong = sb.Length > _limits.MaxExtractedTextChars;
+                return tooLong;
             },
             token).ConfigureAwait(false);
 
         if (read.LimitExceeded)
-            return new DocuTrustFileCheckResult { IsClean = false, Message = "File exceeds security size limits.", IsScanned = true };
+            return Fail("File exceeds security size limits.");
+        if (tooLong)
+            return TextLimitExceeded();
 
         return new DocuTrustFileCheckResult { IsClean = true, Page = sb.ToString(), Message = "Strings extracted from legacy/binary format.", IsScanned = true };
     }
-    
 
+    private enum OfficeContainer
+    {
+        Unsupported,
+        Compound,
+        Package,
+    }
 }

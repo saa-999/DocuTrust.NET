@@ -20,5 +20,8 @@ internal static class FileSize
 
     /// <summary>How many levels of packages embedded in packages are inspected before failing closed.</summary>
     public const int MaxNestedPackageDepth = 3;
+
+    /// <summary>Most characters text extraction returns before failing closed (about 20 MB of UTF-16).</summary>
+    public const int MaxExtractedTextChars = 10_000_000;
     
 }
