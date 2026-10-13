@@ -57,7 +57,7 @@ Empirical probes run before the fixes (scratch program, not committed):
 | DT-022 | Missing PDF action types, annotation subtypes, form-field `/AA`, URI schemes | High | Fixed |
 | DT-023 | PDF objects off the hard-coded paths are never inspected; no raw-byte defense in depth | Medium | Fixed |
 | DT-024 | `#xx`-escaped PDF names bypass structural checks | Info | Not an issue |
-| DT-025 | PDF `GetPageAsync` reports `IsClean = true` without a threat scan; file parsed 2–3 times | Medium | Open |
+| DT-025 | PDF `GetPageAsync` reports `IsClean = true` without a threat scan; file parsed 2–3 times | Medium | Fixed |
 | DT-026 | No PDF page-count, glyph or extracted-text limits | Medium | Open |
 | DT-027 | PDF/ZIP polyglots not detected | Low | Fixed |
 | DT-028 | PdfPig 0.1.14 has known infinite-recursion (stack overflow) bugs | High | Fixed |
@@ -350,10 +350,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: src/DocuTrust/Core/Services/DocuTrustPdfScanner.cs:18-72 (`GetPageAsync`), :79-84, :153
 - Description: `GetPageAsync` checks only encryption and then returns `IsClean = true` together with the text, even for PDFs with JavaScript or `/Launch`. Both public methods parse the file twice (`CheckEncryptionAsync` + main parse), and the existing `GetPages()` loop in the scan parses every page's content stream just to read annotations.
 - Attack scenario / PoC: `GetPageAsync(1, 1, maliciousPdf)` → `IsClean = true`.
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: Both public methods now go through one `ScanCoreAsync`: a single raw pass (size, `%PDF-` header and dangerous names; the header check is folded into the first 64 KB window), then exactly **one** `PdfDocument.Open`, the structural checks, and — for `GetPageAsync` only — text extraction from the same parsed document. A PDF that is not clean is returned as the scan verdict with no text, so `IsClean = true` from extraction always means scanned and clean. `CheckEncryptionAsync` (the extra parse) is gone, and the scan no longer calls `GetPages()` (which parsed every page content stream just to read annotations). `IsEncrypted` now reports `pdf.IsEncrypted` for PDFs PdfPig could decrypt (previously always `false`).
+- Regression test: PdfTextExtractionTests.GetPage_PdfWithJavaScript_IsNotCleanAndReturnsNoText; PdfTextExtractionTests.GetPage_ThreatOnlyVisibleStructurally_IsNotClean; PdfTextExtractionTests.GetPage_OpensTheUploadAtMostTwice (was 3 opens / 2 parses); PdfTextExtractionTests.GetPage_CleanPdf_ReturnsTextAndIsClean
+- Status: Fixed
+- Commit: `git log --grep "DT-025"`
 
 ### DT-026 — No PDF page-count, glyph or extracted-text limits
 - Severity: Medium

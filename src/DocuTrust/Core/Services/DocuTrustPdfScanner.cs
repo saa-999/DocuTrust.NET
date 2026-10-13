@@ -27,51 +27,16 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
         _bufferPool = bufferPool;
     }
 
+    /// <summary>
+    /// Extracts text. The full security scan runs first on the same parsed document: a PDF that is not clean is
+    /// returned as the scan verdict (no text), so <c>IsClean = true</c> here always means "scanned and clean".
+    /// </summary>
     public async Task<DocuTrustFileCheckResult> GetPageAsync(int pageNumber, int allPages, IFormFile file, CancellationToken token = default)
     {
         token.ThrowIfCancellationRequested();
         try
         {
-            var encryptionResult = await CheckEncryptionAsync(file, token);
-            if (encryptionResult.IsEncrypted || !encryptionResult.IsScanned || (encryptionResult.Message?.Contains("Integrity") ?? false))
-                return encryptionResult;
-
-            using var stream = file.OpenReadStream();
-            using var pdf = PdfDocument.Open(stream);
-
-            if (allPages != 0 || pageNumber == 0)
-            {
-                var allText = new StringBuilder();
-                foreach (var page in pdf.GetPages())
-                {
-                    token.ThrowIfCancellationRequested();
-                    var words = page.GetWords(NearestNeighbourWordExtractor.Instance);
-                    allText.AppendLine(string.Join(" ", words.Select(w => w.Text)));
-                }
-                return new DocuTrustFileCheckResult
-                {
-                    IsClean = true,
-                    Page = allText.ToString(),
-                    Message = "Extracted all pages.",
-                    IsScanned = true
-                };
-            }
-            else
-            {
-                token.ThrowIfCancellationRequested();
-                if (pageNumber > pdf.NumberOfPages || pageNumber < 1)
-                    return new DocuTrustFileCheckResult { IsClean = false, Message = "Requested page index out of range.", IsScanned = true };
-
-                var page = pdf.GetPage(pageNumber);
-                var words = page.GetWords(NearestNeighbourWordExtractor.Instance);
-                return new DocuTrustFileCheckResult
-                {
-                    IsClean = true,
-                    Page = string.Join(" ", words.Select(w => w.Text)),
-                    Message = $"Extracted page {pageNumber}.",
-                    IsScanned = true
-                };
-            }
+            return await ScanCoreAsync(file, pdf => ExtractText(pdf, pageNumber, allPages, token), token);
         }
         catch (OperationCanceledException)
         {
@@ -88,54 +53,7 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
         token.ThrowIfCancellationRequested();
         try
         {
-            // Raw bytes first: obviously hostile files never reach the parser, and objects the parser never
-            // surfaces (unreferenced, older incremental revisions) are still seen.
-            var rawThreat = await RawScanAsync(file, token);
-            if (rawThreat != null)
-                return rawThreat;
-
-            var integrityCheck = await CheckEncryptionAsync(file, token);
-            if (!integrityCheck.IsScanned || !integrityCheck.IsClean || integrityCheck.IsEncrypted)
-                return integrityCheck;
-
-            using var stream = file.OpenReadStream();
-            using var pdf = PdfDocument.Open(stream);
-            var catalog = pdf.Structure.Catalog.CatalogDictionary;
-
-            if (ScanCatalogActions(catalog, pdf, out string actionMessage, token))
-            {
-                return new DocuTrustFileCheckResult { IsClean = false, Message = actionMessage, IsScanned = true };
-            }
-
-            if (catalog.TryGet(NameToken.Names, out IToken? namesToken))
-            {
-                if (IsNamesDictionaryMalicious(namesToken, pdf, out string namesMessage, token))
-                {
-                    return new DocuTrustFileCheckResult { IsClean = false, Message = namesMessage, IsScanned = true };
-                }
-            }
-
-            if (catalog.TryGet(NameToken.Create("AA"), out IToken? _))
-            {
-                return new DocuTrustFileCheckResult { IsClean = false, Message = "Suspicious Additional Actions (/AA) detected in catalog.", IsScanned = true };
-            }
-
-            if (catalog.TryGet(NameToken.Create("AcroForm"), out IToken? acroFormToken))
-            {
-                if (IsAcroFormSuspicious(acroFormToken, pdf, out string formMessage, token))
-                {
-                    return new DocuTrustFileCheckResult { IsClean = false, Message = $"Suspicious content in AcroForm: {formMessage}", IsScanned = true };
-                }
-            }
-
-            // Every object reachable from the catalog (pages, annotations, outlines, name trees, fields, objects in
-            // compressed object streams) — without parsing page content streams.
-            if (PdfStructureWalker.FindThreat(pdf, token) is { } structuralThreat)
-            {
-                return new DocuTrustFileCheckResult { IsClean = false, Message = structuralThreat, IsScanned = true };
-            }
-
-            return new DocuTrustFileCheckResult { IsClean = true, Message = "The PDF file passed behavioral analysis.", IsScanned = true };
+            return await ScanCoreAsync(file, extract: null, token);
         }
         catch (OperationCanceledException)
         {
@@ -147,18 +65,111 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
         }
     }
 
+    /// <summary>
+    /// One raw pass over the bytes (size, header, dangerous names), then exactly one PdfPig parse that serves both
+    /// the structural checks and, when requested, text extraction.
+    /// </summary>
+    private async Task<DocuTrustFileCheckResult> ScanCoreAsync(IFormFile file, Func<PdfDocument, DocuTrustFileCheckResult>? extract, CancellationToken token)
+    {
+        // Raw bytes first: obviously hostile files never reach the parser, and objects the parser never
+        // surfaces (unreferenced, older incremental revisions) are still seen.
+        var rawThreat = await RawScanAsync(file, token);
+        if (rawThreat != null)
+            return rawThreat;
+
+        using var stream = file.OpenReadStream();
+        PdfDocument pdf;
+        try
+        {
+            pdf = PdfDocument.Open(stream, new ParsingOptions());
+        }
+        catch (PdfDocumentEncryptedException)
+        {
+            // The content could not be decrypted, so nothing was scanned: never report it clean.
+            return new DocuTrustFileCheckResult { IsEncrypted = true, Message = "The PDF file is encrypted and cannot be scanned.", IsScanned = false, IsClean = false };
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return new DocuTrustFileCheckResult { IsClean = false, Message = "A secure processing error occurred.", IsScanned = true };
+        }
+
+        using (pdf)
+        {
+            var threat = InspectStructure(pdf, token);
+            if (threat != null)
+                return new DocuTrustFileCheckResult { IsClean = false, IsEncrypted = pdf.IsEncrypted, Message = threat, IsScanned = true };
+
+            if (extract != null)
+                return extract(pdf);
+
+            return new DocuTrustFileCheckResult { IsClean = true, IsEncrypted = pdf.IsEncrypted, Message = "The PDF file passed behavioral analysis.", IsScanned = true };
+        }
+    }
+
+    private string? InspectStructure(PdfDocument pdf, CancellationToken token)
+    {
+        var catalog = pdf.Structure.Catalog.CatalogDictionary;
+
+        if (ScanCatalogActions(catalog, pdf, out string actionMessage, token))
+            return actionMessage;
+
+        if (catalog.TryGet(NameToken.Names, out IToken? namesToken) && IsNamesDictionaryMalicious(namesToken, pdf, out string namesMessage, token))
+            return namesMessage;
+
+        if (catalog.TryGet(NameToken.Create("AA"), out IToken? _))
+            return "Suspicious Additional Actions (/AA) detected in catalog.";
+
+        if (catalog.TryGet(NameToken.Create("AcroForm"), out IToken? acroFormToken) && IsAcroFormSuspicious(acroFormToken, pdf, out string formMessage, token))
+            return $"Suspicious content in AcroForm: {formMessage}";
+
+        // Every object reachable from the catalog (pages, annotations, outlines, name trees, fields, objects in
+        // compressed object streams) — without parsing page content streams.
+        return PdfStructureWalker.FindThreat(pdf, token);
+    }
+
+    private static DocuTrustFileCheckResult ExtractText(PdfDocument pdf, int pageNumber, int allPages, CancellationToken token)
+    {
+        if (allPages != 0 || pageNumber == 0)
+        {
+            var allText = new StringBuilder();
+            foreach (var page in pdf.GetPages())
+            {
+                token.ThrowIfCancellationRequested();
+                var words = page.GetWords(NearestNeighbourWordExtractor.Instance);
+                allText.AppendLine(string.Join(" ", words.Select(w => w.Text)));
+            }
+            return new DocuTrustFileCheckResult { IsClean = true, IsEncrypted = pdf.IsEncrypted, Page = allText.ToString(), Message = "Extracted all pages.", IsScanned = true };
+        }
+
+        token.ThrowIfCancellationRequested();
+        if (pageNumber > pdf.NumberOfPages || pageNumber < 1)
+            return new DocuTrustFileCheckResult { IsClean = false, Message = "Requested page index out of range.", IsScanned = true };
+
+        var single = pdf.GetPage(pageNumber).GetWords(NearestNeighbourWordExtractor.Instance);
+        return new DocuTrustFileCheckResult { IsClean = true, IsEncrypted = pdf.IsEncrypted, Page = string.Join(" ", single.Select(w => w.Text)), Message = $"Extracted page {pageNumber}.", IsScanned = true };
+    }
+
     private async Task<DocuTrustFileCheckResult?> RawScanAsync(IFormFile file, CancellationToken token)
     {
         if (file.Length > FileSize.MaxPdfSizeBytes)
             return new DocuTrustFileCheckResult { IsClean = false, Message = "File exceeds maximum safety size limit.", IsScanned = true };
 
         var scanner = new PdfRawScanner();
+        bool validHeader = false;
         ChunkReadResult read;
         using (var stream = file.OpenReadStream())
         {
+            // The first window always holds at least min(file length, 64 KB) bytes, so the header check is exact.
             read = await PooledChunkReader.ReadAsync(
                 stream, _bufferPool, overlap: 0, FileSize.MaxPdfSizeBytes,
-                (window, _) => { scanner.Feed(window); return false; },
+                (window, offset) =>
+                {
+                    if (offset == 0 && !window.StartsWith("%PDF-"u8))
+                        return true;
+                    validHeader = true;
+                    scanner.Feed(window);
+                    return false;
+                },
                 token).ConfigureAwait(false);
         }
         scanner.Complete();
@@ -166,51 +177,12 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
         if (read.LimitExceeded)
             return new DocuTrustFileCheckResult { IsClean = false, Message = "File exceeds maximum safety size limit.", IsScanned = true };
 
+        if (!validHeader)
+            return new DocuTrustFileCheckResult { IsClean = false, Message = "Invalid PDF header signature.", IsScanned = true };
+
         return scanner.Threat == null
             ? null
             : new DocuTrustFileCheckResult { IsClean = false, IsEncrypted = scanner.SawEncrypt, Message = scanner.Threat, IsScanned = true };
-    }
-
-    private async Task<DocuTrustFileCheckResult> CheckEncryptionAsync(IFormFile file, CancellationToken token)
-    {
-        token.ThrowIfCancellationRequested();
-        if (file.Length > FileSize.MaxPdfSizeBytes)
-        {
-            return new DocuTrustFileCheckResult { IsClean = false, Message = "File exceeds maximum safety size limit.", IsScanned = true };
-        }
-
-        try
-        {
-            byte[] header = new byte[5];
-            using (var headerStream = file.OpenReadStream())
-            {
-                token.ThrowIfCancellationRequested();
-                if (await headerStream.ReadAtLeastAsync(header, header.Length, throwOnEndOfStream: false, token) < header.Length || Encoding.ASCII.GetString(header) != "%PDF-")
-                {
-                    return new DocuTrustFileCheckResult { IsClean = false, Message = "Invalid PDF header signature.", IsScanned = true };
-                }
-            }
-
-            // Fresh stream instead of rewinding: no Position reset on streams that cannot seek.
-            using var stream = file.OpenReadStream();
-            using (PdfDocument.Open(stream, new ParsingOptions()))
-            {
-                return new DocuTrustFileCheckResult { IsEncrypted = false, Message = "The PDF file is not encrypted.", IsScanned = true, IsClean = true };
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (PdfDocumentEncryptedException)
-        {
-            // The content could not be decrypted, so nothing was scanned: never report it clean.
-            return new DocuTrustFileCheckResult { IsEncrypted = true, Message = "The PDF file is encrypted and cannot be scanned.", IsScanned = false, IsClean = false };
-        }
-        catch (Exception)
-        {
-            return new DocuTrustFileCheckResult { IsClean = false, Message = "A secure processing error occurred.", IsScanned = true };
-        }
     }
 
     private bool ScanCatalogActions(DictionaryToken catalog, PdfDocument pdf, out string message, CancellationToken token)
