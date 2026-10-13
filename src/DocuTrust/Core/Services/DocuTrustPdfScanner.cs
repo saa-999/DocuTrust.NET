@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Text;
 using Microsoft.AspNetCore.Http;
 using UglyToad.PdfPig;
@@ -15,6 +16,16 @@ namespace DocuTrust.Core.Services;
 
 internal class DocuTrustPdfScanner : IDocuTrustContentFile
 {
+    private readonly ArrayPool<byte> _bufferPool;
+
+    public DocuTrustPdfScanner() : this(ArrayPool<byte>.Shared)
+    {
+    }
+
+    internal DocuTrustPdfScanner(ArrayPool<byte> bufferPool)
+    {
+        _bufferPool = bufferPool;
+    }
 
     public async Task<DocuTrustFileCheckResult> GetPageAsync(int pageNumber, int allPages, IFormFile file, CancellationToken token = default)
     {
@@ -77,6 +88,12 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
         token.ThrowIfCancellationRequested();
         try
         {
+            // Raw bytes first: obviously hostile files never reach the parser, and objects the parser never
+            // surfaces (unreferenced, older incremental revisions) are still seen.
+            var rawThreat = await RawScanAsync(file, token);
+            if (rawThreat != null)
+                return rawThreat;
+
             var integrityCheck = await CheckEncryptionAsync(file, token);
             if (!integrityCheck.IsScanned || !integrityCheck.IsClean || integrityCheck.IsEncrypted)
                 return integrityCheck;
@@ -111,13 +128,11 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
                 }
             }
 
-            foreach (var page in pdf.GetPages())
+            // Every object reachable from the catalog (pages, annotations, outlines, name trees, fields, objects in
+            // compressed object streams) — without parsing page content streams.
+            if (PdfStructureWalker.FindThreat(pdf, token) is { } structuralThreat)
             {
-                token.ThrowIfCancellationRequested();
-                if (ScanPageForAnomalies(page, pdf, out string pageMessage, token))
-                {
-                    return new DocuTrustFileCheckResult { IsClean = false, Message = pageMessage, IsScanned = true };
-                }
+                return new DocuTrustFileCheckResult { IsClean = false, Message = structuralThreat, IsScanned = true };
             }
 
             return new DocuTrustFileCheckResult { IsClean = true, Message = "The PDF file passed behavioral analysis.", IsScanned = true };
@@ -130,6 +145,30 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
         {
             throw new DocuTrustValidationException("Deep scan of PDF failed.", ex);
         }
+    }
+
+    private async Task<DocuTrustFileCheckResult?> RawScanAsync(IFormFile file, CancellationToken token)
+    {
+        if (file.Length > FileSize.MaxPdfSizeBytes)
+            return new DocuTrustFileCheckResult { IsClean = false, Message = "File exceeds maximum safety size limit.", IsScanned = true };
+
+        var scanner = new PdfRawScanner();
+        ChunkReadResult read;
+        using (var stream = file.OpenReadStream())
+        {
+            read = await PooledChunkReader.ReadAsync(
+                stream, _bufferPool, overlap: 0, FileSize.MaxPdfSizeBytes,
+                (window, _) => { scanner.Feed(window); return false; },
+                token).ConfigureAwait(false);
+        }
+        scanner.Complete();
+
+        if (read.LimitExceeded)
+            return new DocuTrustFileCheckResult { IsClean = false, Message = "File exceeds maximum safety size limit.", IsScanned = true };
+
+        return scanner.Threat == null
+            ? null
+            : new DocuTrustFileCheckResult { IsClean = false, IsEncrypted = scanner.SawEncrypt, Message = scanner.Threat, IsScanned = true };
     }
 
     private async Task<DocuTrustFileCheckResult> CheckEncryptionAsync(IFormFile file, CancellationToken token)
@@ -186,28 +225,6 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
                 return true;
             }
         }
-        return false;
-    }
-
-    private bool ScanPageForAnomalies(Page page, PdfDocument pdf, out string message, CancellationToken token)
-    {
-        token.ThrowIfCancellationRequested();
-        message = string.Empty;
-        if (page.Dictionary != null && page.Dictionary.TryGet(NameToken.Create("AA"), out _))
-        {
-            message = $"Suspicious page-level triggers (/AA) on page {page.Number}.";
-            return true;
-        }
-
-        if (page.Dictionary != null && page.Dictionary.TryGet(NameToken.Annots, out IToken? annotsToken))
-        {
-            if (IsAnnotationListMalicious(annotsToken, pdf, out message, token))
-            {
-                message = $"Malicious annotation on page {page.Number}: {message}";
-                return true;
-            }
-        }
-
         return false;
     }
 
@@ -286,34 +303,6 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
             return true;
         }
 
-        return false;
-    }
-
-    private bool IsAnnotationListMalicious(IToken annotsToken, PdfDocument pdf, out string message, CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        message = string.Empty;
-        var annots = annotsToken is IndirectReferenceToken ? Resolve(annotsToken, pdf) : annotsToken;
-        if (annots is not ArrayToken array)
-            return false;
-
-        foreach (var item in array.Data)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var annot = ResolveToDictionary(item, pdf, cancellationToken);
-            if (annot == null)
-                continue;
-
-            // /AA, /RichMedia, /Screen, /Movie, /Sound, /3D, /FileAttachment, embedded files...
-            if (PdfThreatRules.Inspect(annot) is { } threat)
-            {
-                message = threat;
-                return true;
-            }
-
-            if (annot.TryGet(NameToken.A, out IToken? action) && IsActionMalicious(action, pdf, out message, cancellationToken))
-                return true;
-        }
         return false;
     }
 

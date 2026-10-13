@@ -51,4 +51,58 @@ internal static class PdfFixtures
         objects.AddRange(extraObjects);
         return Build(objects);
     }
+
+    /// <summary>
+    /// Builds a PDF 1.5 file whose <paramref name="compressed"/> objects live inside an (unfiltered) object stream,
+    /// referenced from a cross-reference stream. Plain objects are numbered 1..P (object 1 is the catalog), the
+    /// object stream is P+1 and compressed objects are P+2 onwards. Stream bodies are invisible to the raw scan,
+    /// so anything found in compressed objects proves the structural walk.
+    /// </summary>
+    public static byte[] BuildWithObjectStream(IReadOnlyList<string> plain, IReadOnlyList<string> compressed)
+    {
+        var file = new MemoryStream();
+        void Write(string text) => file.Write(Encoding.Latin1.GetBytes(text));
+
+        Write("%PDF-1.7\n%\u00E2\u00E3\u00CF\u00D3\n");
+        var offsets = new List<long>();
+        for (int i = 0; i < plain.Count; i++)
+        {
+            offsets.Add(file.Length);
+            Write($"{i + 1} 0 obj\n{plain[i]}\nendobj\n");
+        }
+
+        int streamNumber = plain.Count + 1;
+        var header = new StringBuilder();
+        var bodies = new StringBuilder();
+        for (int j = 0; j < compressed.Count; j++)
+        {
+            header.Append($"{streamNumber + 1 + j} {bodies.Length} ");
+            bodies.Append(compressed[j]).Append('\n');
+        }
+        string objStmData = header.ToString() + bodies;
+        offsets.Add(file.Length);
+        Write($"{streamNumber} 0 obj\n<< /Type /ObjStm /N {compressed.Count} /First {header.Length} /Length {objStmData.Length} >>\nstream\n{objStmData}\nendstream\nendobj\n");
+
+        int xrefNumber = streamNumber + compressed.Count + 1;
+        var rows = new MemoryStream();
+        void Row(byte type, long field2, int field3)
+        {
+            rows.WriteByte(type);
+            for (int shift = 24; shift >= 0; shift -= 8) rows.WriteByte((byte)(field2 >> shift));
+            rows.WriteByte((byte)(field3 >> 8));
+            rows.WriteByte((byte)field3);
+        }
+        Row(0, 0, 0xFFFF);
+        for (int i = 0; i < plain.Count; i++) Row(1, offsets[i], 0);
+        Row(1, offsets[plain.Count], 0);
+        for (int j = 0; j < compressed.Count; j++) Row(2, streamNumber, j);
+        long xrefOffset = file.Length;
+        Row(1, xrefOffset, 0);
+
+        var rowBytes = rows.ToArray();
+        Write($"{xrefNumber} 0 obj\n<< /Type /XRef /Size {xrefNumber + 1} /W [1 4 2] /Root 1 0 R /Length {rowBytes.Length} >>\nstream\n");
+        file.Write(rowBytes);
+        Write($"\nendstream\nendobj\nstartxref\n{xrefOffset}\n%%EOF\n");
+        return file.ToArray();
+    }
 }

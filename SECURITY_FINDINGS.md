@@ -55,8 +55,8 @@ Empirical probes run before the fixes (scratch program, not committed):
 | DT-020 | PDF action chain: depth limit fails open; `/Next` arrays ignored | High | Fixed |
 | DT-021 | PDF objects that are streams with declared `/Length` > 25 MB are skipped | Medium | Fixed |
 | DT-022 | Missing PDF action types, annotation subtypes, form-field `/AA`, URI schemes | High | Fixed |
-| DT-023 | PDF objects off the hard-coded paths are never inspected; no raw-byte defense in depth | Medium | Open |
-| DT-024 | `#xx`-escaped PDF names bypass structural checks | Info | Open |
+| DT-023 | PDF objects off the hard-coded paths are never inspected; no raw-byte defense in depth | Medium | Fixed |
+| DT-024 | `#xx`-escaped PDF names bypass structural checks | Info | Not an issue |
 | DT-025 | PDF `GetPageAsync` reports `IsClean = true` without a threat scan; file parsed 2–3 times | Medium | Open |
 | DT-026 | No PDF page-count, glyph or extracted-text limits | Medium | Open |
 | DT-027 | PDF/ZIP polyglots not detected | Low | Open |
@@ -328,10 +328,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: src/DocuTrust/Core/Services/DocuTrustPdfScanner.cs:74-132 (`ScanFileContentAsync`)
 - Description: Only the catalog `/OpenAction`, `/Names`, `/AA`, `/AcroForm` and page `/AA`/`/Annots` are checked. Actions reachable through outlines (bookmarks), named destinations, structure trees, nested annotation dictionaries (e.g. `/Parent`, `/Popup`) and objects that a different reader may resolve differently (unreferenced objects, earlier incremental-update revisions) are never examined. No raw-byte scan exists to catch what the parser did not surface.
 - Attack scenario / PoC: an outline item `/A << /S /Launch /F (cmd.exe) >>` → clean; JavaScript in an older incremental-update revision.
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: (1) New `PdfStructureWalker` visits every object reachable from the catalog (pages, annotations and their `/Popup`/`/Parent`, outlines, name trees, fields, optional content, objects in compressed object streams) and applies `PdfThreatRules` to each dictionary. It is iterative with a visited set, limits of 200 000 objects and 64 levels of inline nesting (exceeding either fails closed), skips subtrees that cannot carry actions (`/Contents`, `/Resources`, fonts, `/Metadata`, `/Thumb`, `/StructTreeRoot`), and treats a reference to an undefined object as null per ISO 32000-1 §7.3.10; any other parse error fails closed. It replaces the `GetPages()` loop, which also parsed every page content stream. (2) New `PdfRawScanner` runs before PdfPig: a byte-level tokenizer over the whole file (bounded by `MaxPdfSizeBytes` actual bytes) that decodes `#xx` escapes, compares names case-insensitively and skips stream bodies (KMP match for `endstream`). It flags `/JavaScript /JS /Launch /EmbeddedFile(s) /EF /FileAttachment /RichMedia* /XFA /AA /ImportData /GoToE /GoToR /SubmitForm /Rendition /Sound /Movie /Screen /3D`, so unreferenced objects and earlier incremental-update revisions are covered, and hostile files never reach the parser. `/OpenAction` is deliberately **not** a raw keyword: it is the normal "open at page/zoom" mechanism in benign PDFs (e.g. every hyperref/LaTeX file), and its target is validated structurally.
+- Regression test: PdfDeepInspectionTests.Scan_OutlineLaunchActionInObjectStream_IsDetectedStructurally; PdfDeepInspectionTests.Scan_AnnotationPopupWithJavaScriptInObjectStream_IsDetectedStructurally; PdfDeepInspectionTests.Scan_UnreferencedObjectWithEscapedJavaScript_IsDetectedByRawScan; PdfDeepInspectionTests.Scan_DanglingReferenceAndNamesInsideStreams_AreClean and Scan_CleanObjectStreamDocument_IsClean (no false positives)
+- Status: Fixed
+- Commit: `git log --grep "DT-023"`
 
 ### DT-024 — `#xx`-escaped PDF names bypass structural checks
 - Severity: Info
@@ -339,10 +339,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: src/DocuTrust/Core/Services/DocuTrustPdfScanner.cs (all `NameToken` comparisons)
 - Description: Lead: `/J#61vaScript` would not equal `JavaScript`. Probe result: PdfPig decodes `#xx` escapes while tokenising (`NameToken.Data == "JavaScript"`), and the existing scanner already flags such a file. The raw-byte scan added for DT-023 must decode escapes itself.
 - Attack scenario / PoC: `/S /J#61vaScript` → detected at baseline.
-- Fix: TBD (expected: no code change, regression test only)
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: No code change for the structural path: PdfPig decodes `#xx` escapes while tokenising, so `/S /J#61vaScript` is seen as `JavaScript` (probe and regression test, which also passes on the pre-audit code). The new raw-byte scan (DT-023) decodes escapes itself, so escaped names are caught there too.
+- Regression test: PdfDeepInspectionTests.Scan_EscapedJavaScriptNameInObjectStream_IsDetectedStructurally (structural path); PdfDeepInspectionTests.Scan_UnreferencedObjectWithEscapedJavaScript_IsDetectedByRawScan (raw path)
+- Status: Not an issue
+- Commit: test added with DT-023 (`git log --grep "DT-023"`)
 
 ### DT-025 — PDF `GetPageAsync` reports `IsClean = true` without a threat scan; file parsed 2–3 times
 - Severity: Medium
