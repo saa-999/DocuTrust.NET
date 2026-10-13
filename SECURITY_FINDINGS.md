@@ -44,7 +44,7 @@ Empirical probes run before the fixes (scratch program, not committed):
 | DT-009 | Zip bomb: no total budget, no ratio limit, CD read before count check, extraction unchecked | High | Fixed |
 | DT-010 | Macro detection relies on the part name `vbaProject.bin` only | High | Fixed |
 | DT-011 | Embedded payload detection: case-sensitive, incomplete list, no content sniffing, OLE/nested not inspected | High | Fixed |
-| DT-012 | DDE detection gaps and fail-open `catch {}` | High | Open |
+| DT-012 | DDE detection gaps and fail-open `catch {}` | High | Fixed |
 | DT-013 | Relationship analysis gaps and exponential traversal | High | Open |
 | DT-014 | Every OOXML package is inspected as Word (Excel/PowerPoint branches dead) | Low | Fixed |
 | DT-015 | Encrypted Office documents (legacy and CFB-wrapped OOXML) reported clean | High | Open |
@@ -207,10 +207,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: src/DocuTrust/Core/Services/DocuTrustOfficeScanner.cs:184-193 (`InspectWord`), :219-250 (`PartContainsDDE`)
 - Description: (1) `Contains("DDE")` is case-sensitive, but Word accepts `ddeauto`. (2) `w:fldSimple/@w:instr` is ignored. (3) Each `w:instrText` is checked alone, so `DD` + `EAUTO` split across runs passes. (4) Only main/header/footer parts are scanned; footnotes, endnotes, comments and glossary are not. (5) `catch { }` returns false on any parse error (fail-open). (6) Excel DDE (`externalLinks/*.xml` `<ddeLink>`, `=cmd|'/c …'!A0` formulas) is not checked.
 - Attack scenario / PoC: `<w:fldSimple w:instr=" DDEAUTO c:\\windows\\system32\\cmd.exe &quot;/k calc&quot; "/>` → *"Word document is clean."*.
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: New `OfficeXmlContentScanner` runs in the first pass over **every** XML part (decided by content type, extension or leading bytes, so a renamed part cannot hide markup). It rebuilds complex-field instructions across runs (`fldChar` begin/separate/end with nesting, `instrText`/`delInstrText`), reads `fldSimple/@instr`, and compares the field type case-insensitively against `DDE`/`DDEAUTO`. A field whose type is produced by a nested field (`QUOTE` character-code obfuscation) is flagged. Excel `ddeLink`/`oleLink` elements and formulas or defined names containing a DDE reference (`|` outside string literals and quoted sheet names) are flagged. Malformed XML or any DTD raises `XmlException` → not clean. The SDK-based `PartContainsDDE` and its `catch {}` were removed.
+- Regression test: OfficeDdeDetectionTests (16 cases: complex field, `fldSimple`, lowercase, split runs, nested QUOTE type, footnotes/endnotes/comments/glossary, Excel `ddeLink`, Excel DDE formula, malformed part, DOCTYPE in body, ordinary fields/formulas stay clean)
+- Status: Fixed
+- Commit: `git log --grep "DT-012"`
 
 ### DT-013 — Relationship analysis gaps and exponential traversal
 - Severity: High

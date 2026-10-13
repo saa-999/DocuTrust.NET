@@ -195,17 +195,8 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
     private DocuTrustFileCheckResult InspectWord(WordprocessingDocument doc, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
-        var parts = new List<OpenXmlPart> { doc.MainDocumentPart! };
-        parts.AddRange(doc.MainDocumentPart!.HeaderParts);
-        parts.AddRange(doc.MainDocumentPart!.FooterParts);
 
-        foreach (var part in parts)
-        {
-            token.ThrowIfCancellationRequested();
-            if (PartContainsDDE(part, token))
-                return new DocuTrustFileCheckResult { IsClean = false, Message = "DDE/DDEAUTO field code detected.", IsScanned = true };
-        }
-
+        // Field codes (DDE) in every XML part are checked in the first pass (OfficeXmlContentScanner).
         if (HasSuspiciousRelationships(doc.MainDocumentPart, token))
             return new DocuTrustFileCheckResult { IsClean = false, Message = "Suspicious external relationships or remote templates found.", IsScanned = true };
 
@@ -228,39 +219,6 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
             return new DocuTrustFileCheckResult { IsClean = false, Message = "Suspicious external presentation links detected.", IsScanned = true };
 
         return new DocuTrustFileCheckResult { IsClean = true, Message = "PowerPoint document is clean.", IsScanned = true };
-    }
-
-    private bool PartContainsDDE(OpenXmlPart part, CancellationToken token)
-    {
-        token.ThrowIfCancellationRequested();
-        try
-        {
-            using var partStream = part.GetStream();
-
-            
-            XmlReaderSettings settings = new XmlReaderSettings
-            {
-                DtdProcessing = DtdProcessing.Prohibit,
-                XmlResolver = null
-            };
-
-            using var reader = XmlReader.Create(partStream, settings);
-            while (reader.Read())
-            {
-                token.ThrowIfCancellationRequested();
-                if (reader.NodeType == XmlNodeType.Element && reader.LocalName == "instrText")
-                {
-                    string content = reader.ReadElementContentAsString();
-                    if (content.Contains("DDE") || content.Contains("DDEAUTO")) return true;
-                }
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch { }
-        return false;
     }
 
     private bool HasSuspiciousRelationships(OpenXmlPartContainer? container, CancellationToken token, int currentDepth = 0)

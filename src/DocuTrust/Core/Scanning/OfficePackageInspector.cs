@@ -136,7 +136,7 @@ internal sealed class OfficePackageInspector
             }
             else
             {
-                partThreat = await InspectPartContentAsync(entry, depth, budget, token).ConfigureAwait(false);
+                partThreat = await InspectPartContentAsync(entry, model, depth, budget, token).ConfigureAwait(false);
             }
 
             if (partThreat != null)
@@ -159,14 +159,18 @@ internal sealed class OfficePackageInspector
     }
 
     /// <summary>Classifies a part by its leading bytes (never by its name) and inspects it accordingly.</summary>
-    private async Task<string?> InspectPartContentAsync(ZipArchiveEntry entry, int depth, ScanBudget budget, CancellationToken token)
+    private async Task<string?> InspectPartContentAsync(ZipArchiveEntry entry, PackageModel model, int depth, ScanBudget budget, CancellationToken token)
     {
         var magic = new byte[8];
         int length;
         await using (var peek = OpenBounded(entry, budget))
             length = await peek.ReadAtLeastAsync(magic, magic.Length, throwOnEndOfStream: false, token).ConfigureAwait(false);
 
-        switch (Classify(magic.AsSpan(0, length)))
+        var content = Classify(magic.AsSpan(0, length));
+        if (content == PartContent.Other && LooksLikeXml(entry.FullName, model, magic.AsSpan(0, length)))
+            content = PartContent.Xml;
+
+        switch (content)
         {
             case PartContent.Executable:
                 return ExecutableMessage;
@@ -174,6 +178,15 @@ internal sealed class OfficePackageInspector
                 return await ScanEmbeddedOleAsync(entry, budget, token).ConfigureAwait(false);
             case PartContent.ZipArchive:
                 return await InspectNestedPackageAsync(entry, depth, budget, token).ConfigureAwait(false);
+            case PartContent.Xml:
+                await using (var part = OpenBounded(entry, budget))
+                {
+                    var threat = OfficeXmlContentScanner.Scan(part, token);
+                    if (threat != null)
+                        return threat;
+                    await DrainAsync(part, token).ConfigureAwait(false);
+                }
+                return null;
             default:
                 await DrainAsync(entry, budget, token).ConfigureAwait(false);
                 return null;
@@ -186,6 +199,7 @@ internal sealed class OfficePackageInspector
         Executable,
         OleCompoundFile,
         ZipArchive,
+        Xml,
     }
 
     private async Task<string?> ScanEmbeddedOleAsync(ZipArchiveEntry entry, ScanBudget budget, CancellationToken token)
@@ -236,6 +250,35 @@ internal sealed class OfficePackageInspector
     private static ReadOnlySpan<byte> ElfMagic => [0x7F, 0x45, 0x4C, 0x46];
 
     private static ReadOnlySpan<byte> ShortcutMagic => [0x4C, 0x00, 0x00, 0x00, 0x01, 0x14, 0x02, 0x00];
+
+    /// <summary>
+    /// A part is parsed as XML when its declared content type or extension says so, or when it starts like XML,
+    /// so renaming a part cannot hide markup that Office would still load.
+    /// </summary>
+    private static bool LooksLikeXml(string entryName, PackageModel model, ReadOnlySpan<byte> header)
+    {
+        var contentType = model.ContentTypeOf(PackageModel.ToPartName(entryName));
+        if (contentType != null && (contentType.EndsWith("+xml", StringComparison.OrdinalIgnoreCase)
+                                    || contentType.EndsWith("/xml", StringComparison.OrdinalIgnoreCase)))
+            return true;
+
+        var extension = Path.GetExtension(entryName);
+        if (extension.Equals(".xml", StringComparison.OrdinalIgnoreCase) || extension.Equals(".vml", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (header.StartsWith(Utf16LittleEndianBom) || header.StartsWith(Utf16BigEndianBom))
+            return true;
+        if (header.StartsWith(Utf8Bom))
+            header = header[3..];
+        header = header.TrimStart(" \t\r\n"u8);
+        return !header.IsEmpty && header[0] == (byte)'<';
+    }
+
+    private static ReadOnlySpan<byte> Utf8Bom => [0xEF, 0xBB, 0xBF];
+
+    private static ReadOnlySpan<byte> Utf16LittleEndianBom => [0xFF, 0xFE];
+
+    private static ReadOnlySpan<byte> Utf16BigEndianBom => [0xFE, 0xFF];
 
     private static PartContent Classify(ReadOnlySpan<byte> header)
     {
@@ -300,7 +343,10 @@ internal sealed class OfficePackageInspector
     private async Task DrainAsync(ZipArchiveEntry entry, ScanBudget budget, CancellationToken token)
     {
         await using var part = OpenBounded(entry, budget);
-        await PooledChunkReader.ReadAsync(part, _pool, overlap: 0, long.MaxValue, static (_, _) => false, token)
-            .ConfigureAwait(false);
+        await DrainAsync(part, token).ConfigureAwait(false);
     }
+
+    /// <summary>Reads the rest of a part so every decompressed byte is counted against the limits.</summary>
+    private Task DrainAsync(Stream part, CancellationToken token)
+        => PooledChunkReader.ReadAsync(part, _pool, overlap: 0, long.MaxValue, static (_, _) => false, token);
 }
