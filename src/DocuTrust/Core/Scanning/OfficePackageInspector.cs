@@ -107,7 +107,7 @@ internal sealed class OfficePackageInspector
             rootRelationships = PackageModel.ParseRelationships(part);
         }
 
-        var packageThreat = MacroContentTypeThreat(model) ?? MacroRelationshipThreat(rootRelationships);
+        var packageThreat = MacroContentTypeThreat(model) ?? RelationshipThreat(rootRelationships);
         if (packageThreat != null)
             return Threat(packageThreat);
 
@@ -132,7 +132,7 @@ internal sealed class OfficePackageInspector
             if (entry.FullName.EndsWith(".rels", StringComparison.OrdinalIgnoreCase))
             {
                 using var part = OpenBounded(entry, budget);
-                partThreat = MacroRelationshipThreat(PackageModel.ParseRelationships(part));
+                partThreat = RelationshipThreat(PackageModel.ParseRelationships(part));
             }
             else
             {
@@ -307,16 +307,78 @@ internal sealed class OfficePackageInspector
         return null;
     }
 
-    private static string? MacroRelationshipThreat(IEnumerable<PackageRelationship> relationships)
+    private static string? RelationshipThreat(IEnumerable<PackageRelationship> relationships)
     {
         foreach (var relationship in relationships)
-        {
-            if (XlmRelationshipSuffixes.Any(s => relationship.Type.EndsWith(s, StringComparison.OrdinalIgnoreCase)))
-                return XlmMessage;
-            if (VbaRelationshipSuffixes.Any(s => relationship.Type.EndsWith(s, StringComparison.OrdinalIgnoreCase)))
-                return VbaMessage;
-        }
+            if (RelationshipThreat(relationship) is { } threat)
+                return threat;
         return null;
+    }
+
+    private static string? RelationshipThreat(PackageRelationship relationship)
+    {
+        var type = relationship.Type;
+        if (XlmRelationshipSuffixes.Any(x => type.EndsWith(x, StringComparison.OrdinalIgnoreCase)))
+            return XlmMessage;
+        if (VbaRelationshipSuffixes.Any(x => type.EndsWith(x, StringComparison.OrdinalIgnoreCase)))
+            return VbaMessage;
+
+        bool templateOrFrame = EndsWithSegment(type, "attachedTemplate")
+            || EndsWithSegment(type, "frame")
+            || EndsWithSegment(type, "subDocument");
+
+        if (relationship.IsExternal)
+        {
+            var target = relationship.Target;
+            if (IsUncTarget(target))
+                return "External relationship to a UNC path (NTLM credential-leak risk) detected.";
+
+            // Remote templates, frames and sub-documents are fetched when the file opens (CVE-2021-40444 class).
+            if (templateOrFrame)
+                return "Remote template, frame or sub-document relationship detected.";
+            if (EndsWithSegment(type, "oleObject"))
+                return "External OLE object relationship detected.";
+
+            var scheme = SchemeOf(target);
+            if (scheme != null && !SafeExternalSchemes.Contains(scheme))
+                return "External relationship uses a suspicious URI scheme or protocol handler.";
+        }
+        else if (templateOrFrame && SchemeOf(relationship.Target) is { } internalScheme && !SafeExternalSchemes.Contains(internalScheme))
+        {
+            // A template/frame relationship not marked external but still carrying an absolute off-package scheme.
+            return "Template, frame or sub-document relationship with a suspicious target detected.";
+        }
+
+        return null;
+    }
+
+    private static readonly HashSet<string> SafeExternalSchemes = new(StringComparer.Ordinal) { "http", "https", "mailto" };
+
+    private static bool EndsWithSegment(string relationshipType, string segment)
+        => relationshipType.EndsWith("/" + segment, StringComparison.OrdinalIgnoreCase)
+            || relationshipType.Equals(segment, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsUncTarget(string target)
+    {
+        if (target.StartsWith(@"\", StringComparison.Ordinal))
+            return true;
+        // //host/share is a UNC path; ///path and //// are not (empty authority).
+        return target.StartsWith("//", StringComparison.Ordinal) && target.Length > 2 && target[2] != '/';
+    }
+
+    private static string? SchemeOf(string target)
+    {
+        int colon = target.IndexOf(':');
+        if (colon <= 0)
+            return null;
+        for (int i = 0; i < colon; i++)
+        {
+            char c = target[i];
+            bool ok = i == 0 ? char.IsAsciiLetter(c) : char.IsAsciiLetterOrDigit(c) || c is '+' or '-' or '.';
+            if (!ok)
+                return null;
+        }
+        return target[..colon].ToLowerInvariant();
     }
 
     private static string? MacroPartNameThreat(string entryName)

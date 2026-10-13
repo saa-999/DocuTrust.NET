@@ -192,53 +192,28 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
         }
     }
 
-    private DocuTrustFileCheckResult InspectWord(WordprocessingDocument doc, CancellationToken token)
+    // The first pass (OfficePackageInspector) already checked every part's content types, relationships, field
+    // codes and embedded payloads. Opening the matching SDK type here confirms the package parses as that type;
+    // any failure is treated as not-clean by the caller.
+    private static DocuTrustFileCheckResult InspectWord(WordprocessingDocument doc, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
-
-        // Field codes (DDE) in every XML part are checked in the first pass (OfficeXmlContentScanner).
-        if (HasSuspiciousRelationships(doc.MainDocumentPart, token))
-            return new DocuTrustFileCheckResult { IsClean = false, Message = "Suspicious external relationships or remote templates found.", IsScanned = true };
-
+        _ = doc.MainDocumentPart;
         return new DocuTrustFileCheckResult { IsClean = true, Message = "Word document is clean.", IsScanned = true };
     }
 
-    private DocuTrustFileCheckResult InspectExcel(SpreadsheetDocument doc, CancellationToken token)
+    private static DocuTrustFileCheckResult InspectExcel(SpreadsheetDocument doc, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
-        if (HasSuspiciousRelationships(doc.WorkbookPart, token))
-            return new DocuTrustFileCheckResult { IsClean = false, Message = "Suspicious external workbook links detected.", IsScanned = true };
-
+        _ = doc.WorkbookPart;
         return new DocuTrustFileCheckResult { IsClean = true, Message = "Excel document is clean.", IsScanned = true };
     }
 
-    private DocuTrustFileCheckResult InspectPowerPoint(PresentationDocument doc, CancellationToken token)
+    private static DocuTrustFileCheckResult InspectPowerPoint(PresentationDocument doc, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
-        if (HasSuspiciousRelationships(doc.PresentationPart, token))
-            return new DocuTrustFileCheckResult { IsClean = false, Message = "Suspicious external presentation links detected.", IsScanned = true };
-
+        _ = doc.PresentationPart;
         return new DocuTrustFileCheckResult { IsClean = true, Message = "PowerPoint document is clean.", IsScanned = true };
-    }
-
-    private bool HasSuspiciousRelationships(OpenXmlPartContainer? container, CancellationToken token, int currentDepth = 0)
-    {
-        token.ThrowIfCancellationRequested();
-        if (container == null) return false;
-        if (currentDepth > 50) throw new System.Security.SecurityException("Maximum recursion depth exceeded during relationship analysis.");
-
-        foreach (var rel in container.ExternalRelationships)
-        {
-            token.ThrowIfCancellationRequested();
-            string target = rel.Uri.ToString().ToLowerInvariant();
-            if (target.StartsWith("file://") || target.StartsWith("mhtml:") || target.StartsWith("its:") || target.Contains(".."))
-                return true;
-
-            if (rel.RelationshipType.Contains("attachedTemplate") || rel.RelationshipType.Contains("oleObject"))
-                return true;
-        }
-
-        return container.Parts.Any(p => HasSuspiciousRelationships(p.OpenXmlPart, token, currentDepth + 1));
     }
 
     private async Task<DocuTrustFileCheckResult> ScanLegacyOfficeAsync(Stream stream, CancellationToken token)

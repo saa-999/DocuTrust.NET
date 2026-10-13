@@ -45,7 +45,7 @@ Empirical probes run before the fixes (scratch program, not committed):
 | DT-010 | Macro detection relies on the part name `vbaProject.bin` only | High | Fixed |
 | DT-011 | Embedded payload detection: case-sensitive, incomplete list, no content sniffing, OLE/nested not inspected | High | Fixed |
 | DT-012 | DDE detection gaps and fail-open `catch {}` | High | Fixed |
-| DT-013 | Relationship analysis gaps and exponential traversal | High | Open |
+| DT-013 | Relationship analysis gaps and exponential traversal | High | Fixed |
 | DT-014 | Every OOXML package is inspected as Word (Excel/PowerPoint branches dead) | Low | Fixed |
 | DT-015 | Encrypted Office documents (legacy and CFB-wrapped OOXML) reported clean | High | Open |
 | DT-016 | Office results echo `ex.Message` and ZIP entry names (disclosure, log injection) | Medium | Open |
@@ -218,10 +218,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: src/DocuTrust/Core/Services/DocuTrustOfficeScanner.cs:252-270 (`HasSuspiciousRelationships`)
 - Description: (1) No visited set: shared parts are revisited once per incoming path, so a chain of parts each referenced twice costs 2^depth visits (CPU DoS). (2) Only `ExternalRelationships` are inspected, but the SDK puts hyperlinks in `HyperlinkRelationships`. (3) Protocol-handler targets (`ms-msdt:` Follina-style, `search-ms:`, `ms-word:`, …) and `//host/share` UNC targets are not flagged (`\\host\share` happens to parse as `file://` and is caught). (4) Remote `frame` and `subDocument` relationships (auto-loaded on open) are not flagged. (5) PowerPoint `ppaction://program` / `ppaction://macro` actions are not checked. (6) `Contains("..")` flags benign URLs and misses encoded traversal. (7) Depth overflow throws `SecurityException`, whose message is echoed (DT-016).
 - Attack scenario / PoC: an external hyperlink relationship to `ms-msdt:/id PCWDiagnostic …`, or a slide with `<a:hlinkHover action="ppaction://program" r:id="rIdX"/>` → clean.
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: Relationship analysis moved into the single first pass, which parses each `.rels` part exactly once (no SDK recursion, no revisiting, so the exponential traversal is gone; the `SecurityException` depth guard is removed). Every relationship (not only `ExternalRelationships`) is checked: external `attachedTemplate`/`frame`/`subDocument` (remote templates/frames, CVE-2021-40444 class), external `oleObject`, UNC targets (`\\host\share`, `//host/share`), and any external scheme outside {http, https, mailto} — covering `ms-msdt:` (Follina), `search-ms:`, `ms-word:`, `file:`, `mhtml:`, `its:`, etc. PowerPoint `ppaction://program` and `ppaction://macro` actions are detected by the XML content scanner on `hlinkClick`/`hlinkHover`/`hlinkMouseOver`/`cNvPr`.
+- Regression test: OfficeRelationshipTests (12 cases: remote template/frame/subdocument, UNC hyperlink, 6 protocol-handler schemes, external OLE, ppaction run-program, heavily cross-referenced parts complete quickly, ordinary http/mailto/internal rels stay clean)
+- Status: Fixed
+- Commit: `git log --grep "DT-013"`
 
 ### DT-014 — Every OOXML package is inspected as Word (Excel/PowerPoint branches dead)
 - Severity: Low

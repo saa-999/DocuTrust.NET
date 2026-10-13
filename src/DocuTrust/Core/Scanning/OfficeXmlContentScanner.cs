@@ -87,6 +87,16 @@ internal static class OfficeXmlContentScanner
                         case "oleLink":
                             return ExcelOleLinkMessage;
 
+                        case "hlinkClick":
+                        case "hlinkHover":
+                        case "hlinkMouseOver":
+                        case "cNvPr":
+                            if (GetAttribute(reader, "action") is { } action
+                                && (action.StartsWith("ppaction://program", StringComparison.OrdinalIgnoreCase)
+                                    || action.StartsWith("ppaction://macro", StringComparison.OrdinalIgnoreCase)))
+                                return "PowerPoint run-program/macro action (ppaction) detected.";
+                            break;
+
                         case "f":
                         case "definedName":
                             if (!reader.IsEmptyElement && SpreadsheetNamespaces.Contains(reader.NamespaceURI))
