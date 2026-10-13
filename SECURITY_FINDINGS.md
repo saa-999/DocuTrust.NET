@@ -68,7 +68,7 @@ Empirical probes run before the fixes (scratch program, not committed):
 | DT-033 | Validator exceptions embed the client filename and full path | Low | Open |
 | DT-034 | Path APIs block forever on FIFOs/devices; no regular-file checks | Medium | Open |
 | DT-035 | Vulnerable `OpenMcdf 3.1.0` (uncatchable infinite loops) reachable from uploads | High | Fixed |
-| DT-036 | Vulnerable test-only transitive packages (`System.Net.Http`, `System.Text.RegularExpressions`) | Low | Open |
+| DT-036 | Vulnerable test-only transitive packages (`System.Net.Http`, `System.Text.RegularExpressions`) | Low | Fixed |
 | DT-037 | `FileSize` constants use `int` arithmetic | Info | Open |
 | DT-038 | CI never runs tests (and cannot read `.slnx` with SDK 8) | Low | Open |
 | DT-039 | No scan time limits | Medium | Open |
@@ -471,10 +471,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: tests/DocuTrust.UnitTests/DocuTrust.UnitTests.csproj:16 (`xunit 2.6.2` → `NETStandard.Library 1.6.1`)
 - Description: `System.Net.Http 4.3.0` (GHSA-7jgj-8wvc-jh57) and `System.Text.RegularExpressions 4.3.0` (GHSA-cmhx-cq75-c4mj) are restored for the test project. Not shipped in the package, but they run on developer machines and CI and keep `--vulnerable` noisy.
 - Attack scenario / PoC: n/a (test tooling).
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: Upgraded `xunit` 2.6.2 → 2.9.3 and `xunit.runner.visualstudio` 2.5.4 → 2.8.2. xunit 2.9.x ships a netstandard2.0 asset without the `NETStandard.Library 1.6.1` dependency, so the vulnerable 4.3.0 packages are no longer restored and no new packages were added. `Microsoft.NET.Test.Sdk` was left at 17.8.0 (not vulnerable).
+- Regression test: n/a at runtime (test tooling); enforced by the `dotnet list package --vulnerable` CI gate added for DT-038
+- Status: Fixed
+- Commit: `git log --grep "DT-036"`
 
 ### DT-037 — `FileSize` constants use `int` arithmetic
 - Severity: Info
