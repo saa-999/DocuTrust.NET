@@ -64,7 +64,7 @@ Empirical probes run before the fixes (scratch program, not committed):
 | DT-029 | Empty `expectedExtension` makes `ValidateFileAsync` accept any type, including executables | High | Fixed |
 | DT-030 | Client filename extension ignored (double extensions, docs claim otherwise) | Medium | Fixed |
 | DT-031 | Validator has no size limit before container (ZIP/OLE) parsing | Medium | Fixed |
-| DT-032 | Validator leaves the caller's stream at a changed position | Low | Open |
+| DT-032 | Validator leaves the caller's stream at a changed position | Low | Fixed |
 | DT-033 | Validator exceptions embed the client filename and full path | Low | Open |
 | DT-034 | Path APIs block forever on FIFOs/devices; no regular-file checks | Medium | Open |
 | DT-035 | Vulnerable `OpenMcdf 3.1.0` (uncatchable infinite loops) reachable from uploads | High | Fixed |
@@ -427,10 +427,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: src/DocuTrust/Core/Services/DocuTrustFileScanner.cs:102 (`ValidateFileStreamAsync`)
 - Description: Verified: the inspector seeks to 0, reads, and leaves the stream at 0 regardless of where the caller had positioned it. Callers that then save/forward the stream from their own position get wrong data.
 - Attack scenario / PoC: functional integrity issue; a caller at offset N saves a different byte range than it validated.
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: `ValidateFileStreamAsync` records the caller's position (seekable streams) and restores it in `finally`, on success, failure and exception. The stream is never disposed (verified: the inspector opens ZIP candidates with `leaveOpen`). Detection still inspects from offset 0, as before (documented behaviour: the whole stream is validated).
+- Regression test: ValidatorTests.ValidateFileStreamAsync_RestoresCallerPositionAndKeepsStreamOpen (positions 0, 7, 100)
+- Status: Fixed
+- Commit: `git log --grep "DT-032"`
 
 ### DT-033 — Validator exceptions embed the client filename and full path
 - Severity: Low

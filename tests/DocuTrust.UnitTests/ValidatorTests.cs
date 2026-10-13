@@ -146,4 +146,20 @@ public class ValidatorTests
 
         Assert.True(result.IsValid, result.Message);
     }
+
+    // DT-032: the inspector seeks to 0 and left the caller's stream there.
+    [Theory]
+    [InlineData(0)]
+    [InlineData(7)]
+    [InlineData(100)]
+    public async Task ValidateFileStreamAsync_RestoresCallerPositionAndKeepsStreamOpen(int position)
+    {
+        using var stream = new MemoryStream(Pdf) { Position = position };
+
+        var result = await new DocuTrustFileScanner().ValidateFileStreamAsync(stream, ".pdf", default);
+
+        Assert.True(result.IsValid, result.Message);
+        Assert.True(stream.CanRead);
+        Assert.Equal(position, stream.Position);
+    }
 }

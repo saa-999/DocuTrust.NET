@@ -99,9 +99,11 @@ public class DocuTrustFileScanner : IDocuTrustFileValidator
             {
                 return Task.FromCanceled<DocuTrustValidationResult>(token);
              }
+
+        // The inspector seeks to 0 and leaves the stream there; the caller's position is restored afterwards.
+        long? originalPosition = fileStream.CanSeek ? fileStream.Position : null;
         try
         {
-            
             if (OversizedContainer(fileStream, fileStream.CanSeek ? fileStream.Length : 0) is { } tooLarge)
                 return Task.FromResult(tooLarge);
             var format = _inspector.DetermineFileFormat(fileStream);
@@ -148,6 +150,11 @@ public class DocuTrustFileScanner : IDocuTrustFileValidator
         catch (Exception ex) when(ex is not OperationCanceledException)
         {
             return Task.FromException<DocuTrustValidationResult>(new DocuTrustValidationException("Validation failed for the provided stream.", ex));
+        }
+        finally
+        {
+            if (originalPosition is long position && fileStream.CanSeek)
+                fileStream.Position = position;
         }
     }
 
