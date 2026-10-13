@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write # lets NuGet trusted publishing exchange a GitHub OIDC token for a short-lived API key
 
 jobs:
   publish:
@@ -35,12 +36,13 @@ jobs:
       - name: Pack
         run: dotnet pack src/DocuTrust/DocuTrust.csproj --configuration Release -p:Version=${{ steps.version.outputs.version }} --output nupkg
 
+      # Trusted publishing: the policy on nuget.org trusts saa-999/DocuTrust.NET and this workflow file,
+      # so no long-lived API key is stored in the repository.
+      - name: NuGet login
+        id: login
+        uses: NuGet/login@v1
+        with:
+          user: Dev-TF
+
       - name: Push
-        env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
-        run: |
-          if [ -z "$NUGET_API_KEY" ]; then
-            echo "::error::The NUGET_API_KEY repository secret is not set"
-            exit 1
-          fi
-          dotnet nuget push "nupkg/*.nupkg" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+        run: dotnet nuget push "nupkg/*.nupkg" --api-key "${{ steps.login.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
