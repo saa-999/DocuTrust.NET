@@ -221,28 +221,17 @@ public class DocuTrustFileScanner : IDocuTrustFileValidator
 
             var format = _inspector.DetermineFileFormat(fileStream);
 
-            if (string.IsNullOrEmpty(expectedExtension))
+            // Fail closed: without an expected type there is nothing to validate against, and "any recognised
+            // format" includes executables. The detection result is still reported for callers that need it.
+            if (string.IsNullOrWhiteSpace(expectedExtension) || expectedExtension.Trim() == ".")
             {
-
-                if (format == null)
-                    return Task.FromResult(
-
-                         new DocuTrustValidationResult { IsValid = false, Message = "[DocuTrust] Validation failed: Could not determine file format." }
-
-
-                        );
-
-                return Task.FromResult(
-
-                    new DocuTrustValidationResult
-                    {
-                        IsValid = true,
-                        ActualMimeType = format.MediaType,
-                        ActualExtension = format.Extension,
-                        Message = $"[DocuTrust] Validation successful: {format.MediaType} ({format.Extension})."
-                    }
-
-                    );
+                return Task.FromResult(new DocuTrustValidationResult
+                {
+                    IsValid = false,
+                    ActualMimeType = format?.MediaType,
+                    ActualExtension = format?.Extension,
+                    Message = "[DocuTrust] Validation failed: an expected extension is required."
+                });
             }
 
             if (format != null)

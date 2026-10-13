@@ -61,7 +61,7 @@ Empirical probes run before the fixes (scratch program, not committed):
 | DT-026 | No PDF page-count, glyph or extracted-text limits | Medium | Fixed |
 | DT-027 | PDF/ZIP polyglots not detected | Low | Fixed |
 | DT-028 | PdfPig 0.1.14 has known infinite-recursion (stack overflow) bugs | High | Fixed |
-| DT-029 | Empty `expectedExtension` makes `ValidateFileAsync` accept any type, including executables | High | Open |
+| DT-029 | Empty `expectedExtension` makes `ValidateFileAsync` accept any type, including executables | High | Fixed |
 | DT-030 | Client filename extension ignored (double extensions, docs claim otherwise) | Medium | Open |
 | DT-031 | Validator has no size limit before container (ZIP/OLE) parsing | Medium | Open |
 | DT-032 | Validator leaves the caller's stream at a changed position | Low | Open |
@@ -394,10 +394,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: src/DocuTrust/Core/Services/DocuTrustFileScanner.cs:224-246 (`ValidateFileAsync`)
 - Description: With `expectedExtension` null/empty, any recognised format (PE executable, ELF, MSI, JAR, …) returns `IsValid = true`. The other two validation methods throw for the same input, so the behaviour is inconsistent and fails open.
 - Attack scenario / PoC: an application that passes an optional/empty "expected type" from configuration accepts `malware.exe` as valid.
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: `ValidateFileAsync` now returns `IsValid = false` when `expectedExtension` is null, empty, whitespace or `.`, with message *an expected extension is required*. `ActualMimeType`/`ActualExtension` are still populated, so callers that used the empty value for detection keep the information. No signature change; behaviour change listed under Breaking changes.
+- Regression test: ValidatorTests.ValidateFileAsync_WithoutExpectedExtension_FailsClosed ("", null, whitespace, "."); ValidatorTests.ValidateFileAsync_WithoutExpectedExtension_StillReportsDetectedType
+- Status: Fixed
+- Commit: `git log --grep "DT-029"`
 
 ### DT-030 — Client filename extension ignored (double extensions, docs claim otherwise)
 - Severity: Medium
