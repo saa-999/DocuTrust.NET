@@ -34,6 +34,66 @@ public class OfficeModernScanTests
         Assert.True(result.IsClean, result.Message);
     }
 
+    // DT-014: WordprocessingDocument.Open accepted every package, so workbooks and decks were inspected as Word.
+    [Fact]
+    public async Task ModernScan_Workbook_IsInspectedAsExcel()
+    {
+        var result = await Scan(OoxmlBuilder.Excel().Build(), "book.xlsx");
+
+        Assert.True(result.IsClean, result.Message);
+        Assert.Equal("Excel document is clean.", result.Message);
+    }
+
+    [Fact]
+    public async Task ModernScan_Presentation_IsInspectedAsPowerPoint()
+    {
+        var result = await Scan(OoxmlBuilder.PowerPoint().Build(), "deck.pptx");
+
+        Assert.True(result.IsClean, result.Message);
+        Assert.Equal("PowerPoint document is clean.", result.Message);
+    }
+
+    [Fact]
+    public async Task ModernScan_UnrecognisedMainContentType_FailsClosed()
+    {
+        var package = OoxmlBuilder.Word().Part("word/document.xml", "<doc/>", "application/x-unknown+xml").Build();
+
+        var result = await Scan(package);
+
+        Assert.False(result.IsClean);
+    }
+
+    [Fact]
+    public async Task ModernScan_PlainZipWithoutContentTypes_FailsClosed()
+    {
+        using var ms = new MemoryStream();
+        using (var zip = new System.IO.Compression.ZipArchive(ms, System.IO.Compression.ZipArchiveMode.Create, leaveOpen: true))
+        {
+            using var s = zip.CreateEntry("readme.txt").Open();
+            s.Write("hello"u8);
+        }
+
+        var result = await Scan(ms.ToArray(), "archive.docx");
+
+        Assert.False(result.IsClean);
+    }
+
+    [Fact]
+    public async Task TextExtraction_Workbook_ReturnsCellText()
+    {
+        var result = await new DocuTrustOfficeScanner().GetPageAsync(1, 1, TestFiles.FormFile(OoxmlBuilder.Excel().Build(), "book.xlsx"));
+
+        Assert.Contains("cell text", result.Page);
+    }
+
+    [Fact]
+    public async Task TextExtraction_Presentation_ReturnsSlideText()
+    {
+        var result = await new DocuTrustOfficeScanner().GetPageAsync(1, 1, TestFiles.FormFile(OoxmlBuilder.PowerPoint().Build(), "deck.pptx"));
+
+        Assert.Contains("slide text", result.Page);
+    }
+
     // DT-018: passes reused one stream and reset Position, which throws on non-seekable streams.
     [Fact]
     public async Task LegacyScan_NonSeekableStream_ReturnsVerdict()

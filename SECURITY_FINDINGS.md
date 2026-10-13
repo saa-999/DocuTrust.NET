@@ -46,7 +46,7 @@ Empirical probes run before the fixes (scratch program, not committed):
 | DT-011 | Embedded payload detection: case-sensitive, incomplete list, no content sniffing, OLE/nested not inspected | High | Open |
 | DT-012 | DDE detection gaps and fail-open `catch {}` | High | Open |
 | DT-013 | Relationship analysis gaps and exponential traversal | High | Open |
-| DT-014 | Every OOXML package is inspected as Word (Excel/PowerPoint branches dead) | Low | Open |
+| DT-014 | Every OOXML package is inspected as Word (Excel/PowerPoint branches dead) | Low | Fixed |
 | DT-015 | Encrypted Office documents (legacy and CFB-wrapped OOXML) reported clean | High | Open |
 | DT-016 | Office results echo `ex.Message` and ZIP entry names (disclosure, log injection) | Medium | Open |
 | DT-017 | Office `GetPageAsync` reports `IsClean = true` without scanning; swallows parse errors | Medium | Open |
@@ -229,10 +229,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: src/DocuTrust/Core/Services/DocuTrustOfficeScanner.cs:138-169 (`ScanModernOffice`)
 - Description: `WordprocessingDocument.Open` succeeds on spreadsheet and presentation packages, so `InspectExcel`/`InspectPowerPoint` never run and type-specific checks would be skipped. Verified: an `.xlsx` is reported as *"Word document is clean."*. Also only `InvalidDataException` falls through to the next type, so any other open failure aborts the chain.
 - Attack scenario / PoC: any workbook/presentation; impact today is wrong classification plus Word-only checks running on a workbook.
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: The first pass parses `[Content_Types].xml` and `_rels/.rels` with a DTD-prohibiting reader (`SafeXml`), resolves the main part (root `officeDocument` relationship, transitional or strict) and its content type (Override, then Default), and derives the document kind. The scanner then opens only that SDK type; any failure is fail-closed. Packages without content types or root relationships, or with an unrecognised main content type, are rejected. Text extraction uses the same kind.
+- Regression test: OfficeModernScanTests.ModernScan_Workbook_IsInspectedAsExcel; OfficeModernScanTests.ModernScan_Presentation_IsInspectedAsPowerPoint; OfficeModernScanTests.ModernScan_UnrecognisedMainContentType_FailsClosed; OfficeModernScanTests.ModernScan_PlainZipWithoutContentTypes_FailsClosed; OfficeModernScanTests.TextExtraction_Workbook_ReturnsCellText; OfficeModernScanTests.TextExtraction_Presentation_ReturnsSlideText
+- Status: Fixed
+- Commit: `git log --grep "DT-014"`
 
 ### DT-015 — Encrypted Office documents (legacy and CFB-wrapped OOXML) reported clean
 - Severity: High

@@ -64,11 +64,11 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
             if (header.Length == 4 && header[0] == 0x50 && header[1] == 0x4B && header[2] == 0x03 && header[3] == 0x04)
             {
                 // Enforce real decompressed sizes before the SDK loads any part into a DOM.
-                var limits = await InspectPackageAsync(file, token);
-                if (limits != null)
-                    return limits;
+                var (failure, kind) = await InspectPackageAsync(file, token);
+                if (failure != null)
+                    return failure;
 
-                return ExtractModernText(file, token);
+                return ExtractModernText(file, kind, token);
             }
 
             using var stream = file.OpenReadStream();
@@ -127,25 +127,27 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
         return read == count ? header : header[..read];
     }
 
-    private async Task<DocuTrustFileCheckResult?> InspectPackageAsync(IFormFile file, CancellationToken token)
+    private async Task<(DocuTrustFileCheckResult? Failure, OfficeDocumentKind Kind)> InspectPackageAsync(IFormFile file, CancellationToken token)
     {
         using var stream = file.OpenReadStream();
 
         // ZipArchive needs random access to the central directory; fail closed instead of throwing.
         if (!stream.CanSeek)
-            return new DocuTrustFileCheckResult { IsClean = false, Message = "Office package scanning requires a seekable stream.", IsScanned = false };
+            return (new DocuTrustFileCheckResult { IsClean = false, Message = "Office package scanning requires a seekable stream.", IsScanned = false }, OfficeDocumentKind.Unknown);
 
-        var threat = await new OfficePackageInspector(_bufferPool, _limits).InspectAsync(stream, token);
-        return threat == null ? null : new DocuTrustFileCheckResult { IsClean = false, Message = threat, IsScanned = true };
+        var verdict = await new OfficePackageInspector(_bufferPool, _limits).InspectAsync(stream, token);
+        return verdict.Threat == null
+            ? (null, verdict.Kind)
+            : (new DocuTrustFileCheckResult { IsClean = false, Message = verdict.Threat, IsScanned = true }, verdict.Kind);
     }
 
     private async Task<DocuTrustFileCheckResult> ScanModernOfficeAsync(IFormFile file, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
 
-        var packageResult = await InspectPackageAsync(file, token);
-        if (packageResult != null)
-            return packageResult;
+        var (failure, kind) = await InspectPackageAsync(file, token);
+        if (failure != null)
+            return failure;
 
         var settings = new OpenSettings
         {
@@ -158,39 +160,27 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
 
         try
         {
-            try
+            // Open exactly the document type the package declares; any failure is fail-closed below.
+            using var stream = file.OpenReadStream();
+            switch (kind)
             {
-                using var stream = file.OpenReadStream();
-                using var doc = WordprocessingDocument.Open(stream, false, settings);
-                return InspectWord(doc, token);
+                case OfficeDocumentKind.Word:
+                    using (var doc = WordprocessingDocument.Open(stream, false, settings))
+                        return InspectWord(doc, token);
+                case OfficeDocumentKind.Excel:
+                    using (var doc = SpreadsheetDocument.Open(stream, false, settings))
+                        return InspectExcel(doc, token);
+                case OfficeDocumentKind.PowerPoint:
+                    using (var doc = PresentationDocument.Open(stream, false, settings))
+                        return InspectPowerPoint(doc, token);
+                default:
+                    return new DocuTrustFileCheckResult
+                    {
+                        IsClean = false,
+                        Message = "File format unrecognized or structurally invalid for Office documents",
+                        IsScanned = true
+                    };
             }
-            catch (OperationCanceledException) { throw; }
-            catch (InvalidDataException) { }
-
-            try
-            {
-                using var stream = file.OpenReadStream();
-                using var doc = SpreadsheetDocument.Open(stream, false, settings);
-                return InspectExcel(doc, token);
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (InvalidDataException) { }
-
-            try
-            {
-                using var stream = file.OpenReadStream();
-                using var doc = PresentationDocument.Open(stream, false, settings);
-                return InspectPowerPoint(doc, token);
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (InvalidDataException) { }
-
-            return new DocuTrustFileCheckResult
-            {
-                IsClean = false,
-                Message = "File format unrecognized or structurally invalid for Office documents",
-                IsScanned = true
-            };
         }
         catch (OperationCanceledException)
         {
@@ -320,14 +310,16 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
         return new DocuTrustFileCheckResult { IsClean = true, Message = "Legacy heuristics passed.", IsScanned = true };
     }
 
-    private DocuTrustFileCheckResult ExtractModernText(IFormFile file, CancellationToken token)
+    private DocuTrustFileCheckResult ExtractModernText(IFormFile file, OfficeDocumentKind kind, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
         var sb = new StringBuilder();
         try
         {
-            try
+            if (kind == OfficeDocumentKind.Word)
             {
+                try
+                {
                 using var stream = file.OpenReadStream();
                 using var doc = WordprocessingDocument.Open(stream, false);
                 if (doc.MainDocumentPart?.Document?.Body != null)
@@ -337,10 +329,11 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
                     if (!string.IsNullOrEmpty(text)) sb.Append(text);
                 }
             }
-            catch (OperationCanceledException) { throw; }
-            catch { }
+                catch (OperationCanceledException) { throw; }
+                catch { }
+            }
 
-            if (sb.Length == 0)
+            if (kind == OfficeDocumentKind.Excel)
             {
                 try
                 {
@@ -366,7 +359,7 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
                 catch { }
             }
 
-            if (sb.Length == 0)
+            if (kind == OfficeDocumentKind.PowerPoint)
             {
                 try
                 {
