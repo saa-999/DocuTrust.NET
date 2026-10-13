@@ -14,6 +14,15 @@ internal sealed class OfficePackageInspector
     private const string ContentTypesEntry = "[Content_Types].xml";
     private const string RootRelationshipsEntry = "_rels/.rels";
 
+    private const string VbaMessage = "VBA Macros detected in package.";
+    private const string XlmMessage = "Excel 4.0 (XLM) macro sheet detected in package.";
+
+    // Office finds macro code through content types and relationships, not file names (MS-OFFMACRO2, MS-OI29500).
+    private static readonly string[] VbaContentTypeMarkers = ["macroEnabled", "vbaProject", "vbaData"];
+    private static readonly string[] XlmContentTypeMarkers = ["macrosheet"];
+    private static readonly string[] VbaRelationshipSuffixes = ["/vbaProject", "/vbaProjectSignature", "/wordVbaData"];
+    private static readonly string[] XlmRelationshipSuffixes = ["/xlMacrosheet", "/xlIntlMacrosheet"];
+
     private static readonly HashSet<string> MaliciousExts = new(StringComparer.OrdinalIgnoreCase)
     {
         ".exe", ".vbs", ".ps1", ".bat", ".com", ".scr", ".js", ".jse", ".wsf", ".wsh", ".vbe", ".jar"
@@ -57,6 +66,14 @@ internal sealed class OfficePackageInspector
             using (var part = OpenBounded(rootRelsEntry, budget))
                 rootRelationships = PackageModel.ParseRelationships(part);
 
+            var contentTypeThreat = MacroContentTypeThreat(model);
+            if (contentTypeThreat != null)
+                return Threat(contentTypeThreat);
+
+            var rootThreat = MacroRelationshipThreat(rootRelationships);
+            if (rootThreat != null)
+                return Threat(rootThreat);
+
             foreach (var entry in zip.Entries)
             {
                 token.ThrowIfCancellationRequested();
@@ -64,8 +81,9 @@ internal sealed class OfficePackageInspector
                 if (entry.Length > _limits.MaxPartBytes)
                     return Threat($"Part '{entry.FullName}' exceeds safety size limit.");
 
-                if (entry.FullName.EndsWith("vbaProject.bin", StringComparison.OrdinalIgnoreCase))
-                    return Threat("VBA Macros detected in package.");
+                var nameThreat = MacroPartNameThreat(entry.FullName);
+                if (nameThreat != null)
+                    return Threat(nameThreat);
 
                 if (entry.FullName.Contains("embeddings/"))
                 {
@@ -76,6 +94,18 @@ internal sealed class OfficePackageInspector
 
                 if (entry == contentTypesEntry || entry == rootRelsEntry)
                     continue;
+
+                if (entry.FullName.EndsWith(".rels", StringComparison.OrdinalIgnoreCase))
+                {
+                    List<PackageRelationship> relationships;
+                    using (var part = OpenBounded(entry, budget))
+                        relationships = PackageModel.ParseRelationships(part);
+
+                    var relationshipThreat = MacroRelationshipThreat(relationships);
+                    if (relationshipThreat != null)
+                        return Threat(relationshipThreat);
+                    continue;
+                }
 
                 await DrainAsync(entry, budget, token).ConfigureAwait(false);
             }
@@ -103,6 +133,42 @@ internal sealed class OfficePackageInspector
         {
             return Threat("Package contains malformed XML.");
         }
+    }
+
+    private static string? MacroContentTypeThreat(PackageModel model)
+    {
+        foreach (var contentType in model.AllContentTypes)
+        {
+            if (XlmContentTypeMarkers.Any(m => contentType.Contains(m, StringComparison.OrdinalIgnoreCase)))
+                return XlmMessage;
+            if (VbaContentTypeMarkers.Any(m => contentType.Contains(m, StringComparison.OrdinalIgnoreCase)))
+                return VbaMessage;
+        }
+        return null;
+    }
+
+    private static string? MacroRelationshipThreat(IEnumerable<PackageRelationship> relationships)
+    {
+        foreach (var relationship in relationships)
+        {
+            if (XlmRelationshipSuffixes.Any(s => relationship.Type.EndsWith(s, StringComparison.OrdinalIgnoreCase)))
+                return XlmMessage;
+            if (VbaRelationshipSuffixes.Any(s => relationship.Type.EndsWith(s, StringComparison.OrdinalIgnoreCase)))
+                return VbaMessage;
+        }
+        return null;
+    }
+
+    private static string? MacroPartNameThreat(string entryName)
+    {
+        var name = PackageModel.ToPartName(entryName);
+        if (name.EndsWith("/vbaProject.bin", StringComparison.OrdinalIgnoreCase)
+            || name.EndsWith("/vbaProjectSignature.bin", StringComparison.OrdinalIgnoreCase)
+            || name.EndsWith("/vbaData.xml", StringComparison.OrdinalIgnoreCase))
+            return VbaMessage;
+        if (name.Contains("/macrosheets/", StringComparison.OrdinalIgnoreCase))
+            return XlmMessage;
+        return null;
     }
 
     private static OfficePackageVerdict Threat(string message) => new(message, OfficeDocumentKind.Unknown);

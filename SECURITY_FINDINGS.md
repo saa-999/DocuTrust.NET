@@ -42,7 +42,7 @@ Empirical probes run before the fixes (scratch program, not committed):
 | DT-007 | Single non-looped `ReadAsync` leaves the tail of legacy files unscanned | Medium | Fixed |
 | DT-008 | Whole-file string decoding (≈3× memory); UTF-16 only at even offsets; `Ole10Native` check dead | Medium | Fixed |
 | DT-009 | Zip bomb: no total budget, no ratio limit, CD read before count check, extraction unchecked | High | Fixed |
-| DT-010 | Macro detection relies on the part name `vbaProject.bin` only | High | Open |
+| DT-010 | Macro detection relies on the part name `vbaProject.bin` only | High | Fixed |
 | DT-011 | Embedded payload detection: case-sensitive, incomplete list, no content sniffing, OLE/nested not inspected | High | Open |
 | DT-012 | DDE detection gaps and fail-open `catch {}` | High | Open |
 | DT-013 | Relationship analysis gaps and exponential traversal | High | Open |
@@ -185,10 +185,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: src/DocuTrust/Core/Services/DocuTrustOfficeScanner.cs:116-117 (`ScanModernOffice`)
 - Description: Office locates the VBA project through the `…/relationships/vbaProject` relationship and the `application/vnd.ms-office.vbaProject` content type, not through the file name. Not checked: renamed VBA parts, `macroEnabled` main content types, `vbaData.xml` (`wordVbaData`), Excel 4.0/XLM macro sheets (`xl/macrosheets/`, `xlMacrosheet`/`xlIntlMacrosheet` relationships, `application/vnd.ms-excel.macrosheet+xml`).
 - Attack scenario / PoC: rename `word/vbaProject.bin` to `word/data.bin` and update the relationship target → *"Word document is clean."*. An `.xlsm` whose only payload is an XLM macro sheet → clean.
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: The first pass now flags (a) any content type in `[Content_Types].xml` containing `macroEnabled`, `vbaProject`, `vbaData` (VBA) or `macrosheet` (XLM, incl. `intlmacrosheet`); (b) relationships of type `…/vbaProject`, `…/vbaProjectSignature`, `…/wordVbaData`, `…/xlMacrosheet`, `…/xlIntlMacrosheet` in **every** `.rels` part (case-insensitive); (c) parts named `vbaProject.bin`, `vbaProjectSignature.bin`, `vbaData.xml` or located under `macrosheets/`. Content sniffing of renamed OLE/VBA blobs is added with DT-011.
+- Regression test: OfficeMacroDetectionTests (9 tests: literal name, renamed part via relationship, via content type, macro-enabled main type, vbaData by name and by relationship, XLM macro sheet by path, relationship and content type)
+- Status: Fixed
+- Commit: `git log --grep "DT-010"`
 
 ### DT-011 — Embedded payload detection: case-sensitive, incomplete list, no content sniffing, OLE/nested not inspected
 - Severity: High
