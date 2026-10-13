@@ -82,7 +82,7 @@ public class DocuTrustFileScanner : IDocuTrustFileValidator
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            return Task.FromException<DocuTrustValidationResult>(new DocuTrustValidationException($"Validation failed for path: {filePath}", ex));
+            return Task.FromException<DocuTrustValidationResult>(new DocuTrustValidationException("Validation failed for the provided path.", ex));
         }
     }
 
@@ -208,7 +208,7 @@ public class DocuTrustFileScanner : IDocuTrustFileValidator
         }
         catch (Exception ex) when(ex is not OperationCanceledException)
         {
-            return Task.FromException<DocuTrustValidationResult>(new DocuTrustValidationException($"Validation failed for path: {filePath}", ex));
+            return Task.FromException<DocuTrustValidationResult>(new DocuTrustValidationException("Validation failed for the provided path.", ex));
         }
 
     }
@@ -297,7 +297,7 @@ public class DocuTrustFileScanner : IDocuTrustFileValidator
         {
             return Task.FromException<DocuTrustValidationResult>(
 
-                new DocuTrustValidationException($"Validation failed for file: {file.FileName}", ex)
+                new DocuTrustValidationException("Validation failed for the provided file.", ex)
 
                 );
         }

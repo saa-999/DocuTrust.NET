@@ -65,7 +65,7 @@ Empirical probes run before the fixes (scratch program, not committed):
 | DT-030 | Client filename extension ignored (double extensions, docs claim otherwise) | Medium | Fixed |
 | DT-031 | Validator has no size limit before container (ZIP/OLE) parsing | Medium | Fixed |
 | DT-032 | Validator leaves the caller's stream at a changed position | Low | Fixed |
-| DT-033 | Validator exceptions embed the client filename and full path | Low | Open |
+| DT-033 | Validator exceptions embed the client filename and full path | Low | Fixed |
 | DT-034 | Path APIs block forever on FIFOs/devices; no regular-file checks | Medium | Open |
 | DT-035 | Vulnerable `OpenMcdf 3.1.0` (uncatchable infinite loops) reachable from uploads | High | Fixed |
 | DT-036 | Vulnerable test-only transitive packages (`System.Net.Http`, `System.Text.RegularExpressions`) | Low | Fixed |
@@ -438,10 +438,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: src/DocuTrust/Core/Services/DocuTrustFileScanner.cs:82, :197, :288
 - Description: `DocuTrustValidationException` messages contain `file.FileName` (attacker-controlled, may contain CR/LF) and full server paths. Exception messages are often logged verbatim or returned by default error handlers.
 - Attack scenario / PoC: upload a malformed OLE file named `x\r\n2026-10-13 INFO user=admin login ok.doc` → forged log line; path disclosure via error pages.
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: Exception messages are now constant: *Validation failed for the provided path.* / *...provided file.* / *...provided stream.*. The original exception stays available as `InnerException` for server-side logging. Note for consumers: BCL inner exceptions such as `FileNotFoundException` still contain the path, so log them, but do not return them to clients.
+- Regression test: ValidatorTests.ValidateFileAsync_Failure_DoesNotEchoClientFileName (CR/LF + marker in the name); ValidatorTests.ValidateFilePathAsync_Failure_DoesNotEchoPath; ValidatorTests.GetFileTypeAsync_Failure_DoesNotEchoPath
+- Status: Fixed
+- Commit: `git log --grep "DT-033"`
 
 ### DT-034 — Path APIs block forever on FIFOs/devices; no regular-file checks
 - Severity: Medium

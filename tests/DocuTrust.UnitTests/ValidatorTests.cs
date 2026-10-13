@@ -162,4 +162,44 @@ public class ValidatorTests
         Assert.True(stream.CanRead);
         Assert.Equal(position, stream.Position);
     }
+
+    private const string Marker = "INJECTED-MARKER";
+
+    // DT-033: exception messages embedded the client file name (log forging) and full server paths.
+    [Fact]
+    public async Task ValidateFileAsync_Failure_DoesNotEchoClientFileName()
+    {
+        // OLE magic followed by an invalid header makes format detection throw.
+        var malformed = new byte[2048];
+        new byte[] { 0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1 }.CopyTo(malformed, 0);
+        var file = TestFiles.FormFile(malformed, $"x\r\n2026-10-13 INFO {Marker}.doc");
+
+        var ex = await Assert.ThrowsAsync<DocuTrust.Exceptions.DocuTrustValidationException>(
+            () => new DocuTrustFileScanner().ValidateFileAsync(file, ".doc"));
+
+        Assert.DoesNotContain(Marker, ex.Message);
+        Assert.DoesNotContain(ex.Message, char.IsControl);
+    }
+
+    [Fact]
+    public async Task ValidateFilePathAsync_Failure_DoesNotEchoPath()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"{Marker}-{Guid.NewGuid():N}", "missing.pdf");
+
+        var ex = await Assert.ThrowsAsync<DocuTrust.Exceptions.DocuTrustValidationException>(
+            () => new DocuTrustFileScanner().ValidateFilePathAsync(path, ".pdf"));
+
+        Assert.DoesNotContain(Marker, ex.Message);
+    }
+
+    [Fact]
+    public async Task GetFileTypeAsync_Failure_DoesNotEchoPath()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"{Marker}-{Guid.NewGuid():N}", "missing.pdf");
+
+        var ex = await Assert.ThrowsAsync<DocuTrust.Exceptions.DocuTrustValidationException>(
+            () => new DocuTrustFileScanner().GetFileTypeAsync(path));
+
+        Assert.DoesNotContain(Marker, ex.Message);
+    }
 }
