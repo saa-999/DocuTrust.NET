@@ -32,5 +32,8 @@ internal static class FileSize
 
     /// <summary>Most indirect objects the structural PDF walk visits before failing closed.</summary>
     public const int MaxPdfObjects = 200_000;
+
+    /// <summary>Wall-clock budget for one content scan; exceeding it fails closed.</summary>
+    public static readonly TimeSpan DefaultScanTimeout = TimeSpan.FromMinutes(2);
     
 }

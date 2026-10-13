@@ -42,7 +42,8 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
         token.ThrowIfCancellationRequested();
         try
         {
-            return await ScanCoreAsync(file, pdf => ExtractText(pdf, pageNumber, allPages, token), token);
+            return await ScanTimeLimit.RunAsync(_limits.ScanTimeout, token,
+                budget => ScanCoreAsync(file, pdf => ExtractText(pdf, pageNumber, allPages, budget), budget));
         }
         catch (OperationCanceledException)
         {
@@ -59,7 +60,8 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
         token.ThrowIfCancellationRequested();
         try
         {
-            return await ScanCoreAsync(file, extract: null, token);
+            return await ScanTimeLimit.RunAsync(_limits.ScanTimeout, token,
+                budget => ScanCoreAsync(file, extract: null, budget));
         }
         catch (OperationCanceledException)
         {

@@ -71,7 +71,7 @@ Empirical probes run before the fixes (scratch program, not committed):
 | DT-036 | Vulnerable test-only transitive packages (`System.Net.Http`, `System.Text.RegularExpressions`) | Low | Fixed |
 | DT-037 | `FileSize` constants use `int` arithmetic | Info | Open |
 | DT-038 | CI never runs tests (and cannot read `.slnx` with SDK 8) | Low | Open |
-| DT-039 | No scan time limits | Medium | Open |
+| DT-039 | No scan time limits | Medium | Fixed |
 | DT-040 | Content scanners are internal; public API only checks magic bytes | Info | Open |
 | DT-041 | XML parsing: DTD/XXE settings | Info | Open |
 | DT-042 | Thread safety of shared instances (other than the pool) | Info | Open |
@@ -504,10 +504,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: DocuTrustOfficeScanner.cs, DocuTrustPdfScanner.cs (public entry points)
 - Description: Scans run until completion unless the caller passes a cancellable token. Pathological but in-limit inputs (deep relationship graphs, huge glyph counts, complex XML) can hold a request thread for minutes.
 - Attack scenario / PoC: a handful of slow-to-parse uploads exhausts the thread pool.
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: New `ScanTimeLimit.RunAsync` wraps all four scanner entry points in a token linked to the caller's, with a wall-clock budget (`FileSize.DefaultScanTimeout` = 2 min, configurable through the internal `OfficeScanLimits`/`PdfScanLimits.ScanTimeout`). When the budget expires the result is `IsClean = false`, `IsScanned = false`, *Scan time limit exceeded.*; the caller's own cancellation still throws `OperationCanceledException`. All stream reads, XML loops, ZIP loops and object walks observe the token. Limitation: a single synchronous PdfPig or OpenXML SDK call cannot be interrupted mid-call (see Residual risks).
+- Regression test: ScanTimeoutTests.OfficeScan_BudgetExpired_FailsClosed; ScanTimeoutTests.PdfScan_BudgetExpired_FailsClosed; ScanTimeoutTests.SlowUpload_ExceedingBudget_FailsClosedInsteadOfHanging (300 ms budget vs ~13 s slow stream); ScanTimeoutTests.Scans_CallerCancellation_StillThrows; ScanTimeoutTests.Scans_WithinDefaultBudget_Complete
+- Status: Fixed
+- Commit: `git log --grep "DT-039"`
 
 ### DT-040 — Content scanners are internal; public API only checks magic bytes
 - Severity: Info

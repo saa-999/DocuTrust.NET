@@ -129,6 +129,28 @@ internal sealed class TrickleStream : Stream
     public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
 }
 
+/// <summary>A read-only seekable stream that waits before every read (like a slow network peer) and honours cancellation.</summary>
+internal sealed class SlowStream : MemoryStream
+{
+    private readonly TimeSpan _delay;
+    private readonly int _maxChunk;
+
+    public SlowStream(byte[] data, TimeSpan delay, int maxChunk) : base(data, writable: false)
+    {
+        _delay = delay;
+        _maxChunk = maxChunk;
+    }
+
+    public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+    {
+        await Task.Delay(_delay, cancellationToken);
+        return await base.ReadAsync(buffer[..Math.Min(buffer.Length, _maxChunk)], cancellationToken);
+    }
+
+    public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+        => ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+}
+
 /// <summary>An <see cref="ArrayPool{T}"/> that records every rent and return.</summary>
 internal sealed class RecordingArrayPool : ArrayPool<byte>
 {

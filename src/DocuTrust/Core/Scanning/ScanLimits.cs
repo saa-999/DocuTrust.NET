@@ -46,6 +46,8 @@ internal sealed class OfficeScanLimits
     public int MaxNestedPackageDepth { get; init; } = FileSize.MaxNestedPackageDepth;
 
     public int MaxExtractedTextChars { get; init; } = FileSize.MaxExtractedTextChars;
+
+    public TimeSpan ScanTimeout { get; init; } = FileSize.DefaultScanTimeout;
 }
 
 /// <summary>Resource limits for PDF scanning and extraction. Defaults come from <see cref="FileSize"/>; tests may lower them.</summary>
@@ -60,4 +62,36 @@ internal sealed class PdfScanLimits
     public int MaxExtractedTextChars { get; init; } = FileSize.MaxExtractedTextChars;
 
     public int MaxObjects { get; init; } = FileSize.MaxPdfObjects;
+
+    public TimeSpan ScanTimeout { get; init; } = FileSize.DefaultScanTimeout;
+}
+
+/// <summary>Runs a scan under a wall-clock budget that fails closed.</summary>
+internal static class ScanTimeLimit
+{
+    public static async Task<DocuTrust.Core.Models.DocuTrustFileCheckResult> RunAsync(
+        TimeSpan timeout,
+        CancellationToken callerToken,
+        Func<CancellationToken, Task<DocuTrust.Core.Models.DocuTrustFileCheckResult>> scan)
+    {
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(callerToken);
+        if (timeout <= TimeSpan.Zero)
+            budget.Cancel(); // no budget at all: expire now rather than via a timer callback
+        else
+            budget.CancelAfter(timeout);
+        try
+        {
+            return await scan(budget.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!callerToken.IsCancellationRequested)
+        {
+            // Our own budget expired (the caller did not cancel): not scanned, so never clean.
+            return new DocuTrust.Core.Models.DocuTrustFileCheckResult
+            {
+                IsClean = false,
+                IsScanned = false,
+                Message = "Scan time limit exceeded.",
+            };
+        }
+    }
 }

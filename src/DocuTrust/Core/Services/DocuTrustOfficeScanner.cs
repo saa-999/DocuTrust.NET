@@ -58,15 +58,18 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
         token.ThrowIfCancellationRequested();
         try
         {
-            var (scan, container, kind) = await ScanCoreAsync(file, token);
-            if (!scan.IsClean)
-                return scan;
+            return await ScanTimeLimit.RunAsync(_limits.ScanTimeout, token, async budget =>
+            {
+                var (scan, container, kind) = await ScanCoreAsync(file, budget);
+                if (!scan.IsClean)
+                    return scan;
 
-            if (container == OfficeContainer.Package)
-                return ExtractModernText(file, kind, token);
+                if (container == OfficeContainer.Package)
+                    return ExtractModernText(file, kind, budget);
 
-            using var stream = file.OpenReadStream();
-            return await ExtractLegacyTextAsync(stream, token);
+                using var stream = file.OpenReadStream();
+                return await ExtractLegacyTextAsync(stream, budget);
+            });
         }
         catch (OperationCanceledException)
         {
@@ -83,7 +86,8 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
         token.ThrowIfCancellationRequested();
         try
         {
-            return (await ScanCoreAsync(file, token)).Result;
+            return await ScanTimeLimit.RunAsync(_limits.ScanTimeout, token,
+                async budget => (await ScanCoreAsync(file, budget)).Result);
         }
         catch (OperationCanceledException)
         {
