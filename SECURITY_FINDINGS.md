@@ -67,7 +67,7 @@ Empirical probes run before the fixes (scratch program, not committed):
 | DT-032 | Validator leaves the caller's stream at a changed position | Low | Open |
 | DT-033 | Validator exceptions embed the client filename and full path | Low | Open |
 | DT-034 | Path APIs block forever on FIFOs/devices; no regular-file checks | Medium | Open |
-| DT-035 | Vulnerable `OpenMcdf 3.1.0` (uncatchable infinite loops) reachable from uploads | High | Open |
+| DT-035 | Vulnerable `OpenMcdf 3.1.0` (uncatchable infinite loops) reachable from uploads | High | Fixed |
 | DT-036 | Vulnerable test-only transitive packages (`System.Net.Http`, `System.Text.RegularExpressions`) | Low | Open |
 | DT-037 | `FileSize` constants use `int` arithmetic | Info | Open |
 | DT-038 | CI never runs tests (and cannot read `.slnx` with SDK 8) | Low | Open |
@@ -460,10 +460,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: src/DocuTrust/DocuTrust.csproj:32 (`FileSignatures 7.0.0` → `OpenMcdf 3.1.0`)
 - Description: CVE-2026-41511 / GHSA-jxpf-xq2m-q525 (fixed 3.1.3) and CVE-2026-45785 / GHSA-5qwm-7pvp-w988 (fixed 3.1.4): a CFB directory whose sibling links form a cycle makes enumeration/lookup loop forever without throwing. Verified that `ValidateFileAsync` drives `OpenMcdf` for any file with the OLE magic, so a few hundred bytes hang a request thread permanently.
 - Attack scenario / PoC: upload a crafted `.doc` with a directory cycle repeatedly → thread-pool exhaustion.
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: Upgraded `FileSignatures` 7.0.0 → 7.3.0 (no API changes; 7.1 bumped OpenMcdf to 3.1.3 and 7.2.1 to 3.1.4). `dotnet list package --vulnerable --include-transitive` is now clean for the library. Not reproduced in-house: the guard is a version check on the resolved runtime assembly.
+- Regression test: DependencyVersionTests.OpenMcdf_ResolvedVersion_IncludesDirectoryCycleFixes; DependencyVersionTests.FileSignatures_ResolvedVersion_DependsOnPatchedOpenMcdf
+- Status: Fixed
+- Commit: `git log --grep "DT-035"`
 
 ### DT-036 — Vulnerable test-only transitive packages
 - Severity: Low
