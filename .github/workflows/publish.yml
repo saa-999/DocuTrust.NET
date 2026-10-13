@@ -1,0 +1,46 @@
+name: Publish to NuGet
+
+# Push a tag such as v1.1.0 to publish that version. The version comes from the tag, not the csproj.
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+*'
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Read version from tag
+        id: version
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME is not a version (expected vX.Y.Z or vX.Y.Z-suffix)"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # The .NET 8 SDK cannot read DocuTrust.slnx; the test project references the library.
+      - name: Test
+        run: dotnet test tests/DocuTrust.UnitTests/DocuTrust.UnitTests.csproj --configuration Release
+
+      - name: Pack
+        run: dotnet pack src/DocuTrust/DocuTrust.csproj --configuration Release -p:Version=${{ steps.version.outputs.version }} --output nupkg
+
+      - name: Push
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          if [ -z "$NUGET_API_KEY" ]; then
+            echo "::error::The NUGET_API_KEY repository secret is not set"
+            exit 1
+          fi
+          dotnet nuget push "nupkg/*.nupkg" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
