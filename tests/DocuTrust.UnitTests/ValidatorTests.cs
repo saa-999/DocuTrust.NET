@@ -85,4 +85,65 @@ public class ValidatorTests
 
         Assert.True(result.IsValid, result.Message);
     }
+
+    private const long OverLimit = 200L * 1024 * 1024;
+
+    // DT-031: ZIP/OLE containers were handed to ZipArchive/OpenMcdf without any size limit.
+    [Fact]
+    public async Task ValidateFileStreamAsync_OversizedZipContainer_IsRejectedBeforeParsing()
+    {
+        var docx = OoxmlBuilder.Word().Build();
+        using var stream = new TrickleStream(docx, reportedLength: OverLimit);
+
+        var result = await new DocuTrustFileScanner().ValidateFileStreamAsync(stream, ".docx", default);
+
+        Assert.False(result.IsValid);
+        Assert.Contains("size limit", result.Message);
+    }
+
+    [Fact]
+    public async Task ValidateFileAsync_OversizedOleContainer_IsRejectedBeforeParsing()
+    {
+        var doc = TestFiles.Cfb(4096);
+        var file = new StreamFormFile(() => new MemoryStream(doc), OverLimit, "legacy.doc");
+
+        var result = await new DocuTrustFileScanner().ValidateFileAsync(file, ".doc");
+
+        Assert.False(result.IsValid);
+        Assert.Contains("size limit", result.Message);
+    }
+
+    [Fact]
+    public async Task ValidateFilePathAsync_OversizedZipContainer_IsRejectedBeforeParsing()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"dt-{Guid.NewGuid():N}.docx");
+        try
+        {
+            using (var fs = File.Create(path))
+            {
+                fs.Write(OoxmlBuilder.Word().Build());
+                fs.SetLength(OverLimit); // sparse: no real disk usage
+            }
+
+            var result = await new DocuTrustFileScanner().ValidateFilePathAsync(path, ".docx");
+
+            Assert.False(result.IsValid);
+            Assert.Contains("size limit", result.Message);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    // Non-container formats only need their header and must keep validating at any size.
+    [Fact]
+    public async Task ValidateFileStreamAsync_LargeNonContainer_IsStillValidated()
+    {
+        using var stream = new TrickleStream(Pdf, reportedLength: OverLimit);
+
+        var result = await new DocuTrustFileScanner().ValidateFileStreamAsync(stream, ".pdf", default);
+
+        Assert.True(result.IsValid, result.Message);
+    }
 }

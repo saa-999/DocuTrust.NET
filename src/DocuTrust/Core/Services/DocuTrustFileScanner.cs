@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Http;
 using FileSignatures;
 using DocuTrust.Core.Abstractions;
+using DocuTrust.Core.Constants;
 using DocuTrust.Core.Models;
 using DocuTrust.Exceptions;
 
@@ -39,6 +40,8 @@ public class DocuTrustFileScanner : IDocuTrustFileValidator
         {
 
             using var fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, false  );
+            if (OversizedContainer(fileStream, fileStream.Length) is { } tooLarge)
+                return Task.FromResult(tooLarge);
             var format = _inspector.DetermineFileFormat(fileStream);
 
             if (format != null)
@@ -99,6 +102,8 @@ public class DocuTrustFileScanner : IDocuTrustFileValidator
         try
         {
             
+            if (OversizedContainer(fileStream, fileStream.CanSeek ? fileStream.Length : 0) is { } tooLarge)
+                return Task.FromResult(tooLarge);
             var format = _inspector.DetermineFileFormat(fileStream);
 
             if (format != null)
@@ -161,6 +166,8 @@ public class DocuTrustFileScanner : IDocuTrustFileValidator
 
 
             using var fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, false);
+            if (OversizedContainer(fileStream, fileStream.Length) is { } tooLarge)
+                return Task.FromResult(tooLarge);
 
             var format = _inspector.DetermineFileFormat(fileStream);
 
@@ -218,6 +225,8 @@ public class DocuTrustFileScanner : IDocuTrustFileValidator
         {
            
             using var fileStream = file.OpenReadStream();
+            if (OversizedContainer(fileStream, Math.Max(file.Length, fileStream.CanSeek ? fileStream.Length : 0)) is { } tooLarge)
+                return Task.FromResult(tooLarge);
 
             var format = _inspector.DetermineFileFormat(fileStream);
 
@@ -285,6 +294,38 @@ public class DocuTrustFileScanner : IDocuTrustFileValidator
 
                 );
         }
+    }
+
+    private static readonly byte[] CompoundFileMagic = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+
+    /// <summary>
+    /// FileSignatures parses ZIP (OOXML) and OLE/CFB candidates with ZipArchive and OpenMcdf to tell formats apart,
+    /// so those containers are refused above <see cref="FileSize.MaxFileSizeBytes"/> before any parsing. Other
+    /// formats only need their header and keep working at any size.
+    /// </summary>
+    private static DocuTrustValidationResult? OversizedContainer(Stream stream, long length)
+    {
+        if (length <= FileSize.MaxFileSizeBytes || !stream.CanSeek)
+            return null;
+
+        long position = stream.Position;
+        Span<byte> header = stackalloc byte[8];
+        int read;
+        try
+        {
+            stream.Position = 0;
+            read = stream.ReadAtLeast(header, header.Length, throwOnEndOfStream: false);
+        }
+        finally
+        {
+            stream.Position = position;
+        }
+
+        header = header[..read];
+        bool container = header.StartsWith("PK"u8) || header.StartsWith(CompoundFileMagic);
+        return container
+            ? new DocuTrustValidationResult { IsValid = false, Message = "[DocuTrust] Validation failed: container file exceeds the size limit for format inspection." }
+            : null;
     }
 
     private static readonly string[][] ExtensionAliases =

@@ -63,7 +63,7 @@ Empirical probes run before the fixes (scratch program, not committed):
 | DT-028 | PdfPig 0.1.14 has known infinite-recursion (stack overflow) bugs | High | Fixed |
 | DT-029 | Empty `expectedExtension` makes `ValidateFileAsync` accept any type, including executables | High | Fixed |
 | DT-030 | Client filename extension ignored (double extensions, docs claim otherwise) | Medium | Fixed |
-| DT-031 | Validator has no size limit before container (ZIP/OLE) parsing | Medium | Open |
+| DT-031 | Validator has no size limit before container (ZIP/OLE) parsing | Medium | Fixed |
 | DT-032 | Validator leaves the caller's stream at a changed position | Low | Open |
 | DT-033 | Validator exceptions embed the client filename and full path | Low | Open |
 | DT-034 | Path APIs block forever on FIFOs/devices; no regular-file checks | Medium | Open |
@@ -416,10 +416,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: src/DocuTrust/Core/Services/DocuTrustFileScanner.cs:42, :102, :165, :222
 - Description: `FileFormatInspector` opens ZIP-based (OOXML) candidates with `ZipArchive` and OLE candidates with `OpenMcdf` to tell formats apart. None of the validation methods applies `FileSize.MaxFileSizeBytes`, so arbitrarily large containers (huge central directories, see DT-009) are parsed by a plain "check the type" call.
 - Attack scenario / PoC: multi-GB ZIP with millions of central-directory entries passed to `ValidateFileStreamAsync`.
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: All four validator methods now call `OversizedContainer` before `DetermineFileFormat`: when the length (max of `IFormFile.Length` and the stream length, or the file length for paths) exceeds `FileSize.MaxFileSizeBytes` and the header is a ZIP (`PK`) or OLE/CFB signature, validation returns `IsValid = false` without parsing. The limit deliberately applies only to the container formats that FileSignatures parses with ZipArchive/OpenMcdf; other formats are identified from their header and keep working at any size (e.g. large media). The caller's stream position is preserved by the check.
+- Regression test: ValidatorTests.ValidateFileStreamAsync_OversizedZipContainer_IsRejectedBeforeParsing; ValidatorTests.ValidateFileAsync_OversizedOleContainer_IsRejectedBeforeParsing; ValidatorTests.ValidateFilePathAsync_OversizedZipContainer_IsRejectedBeforeParsing (sparse 200 MB file); ValidatorTests.ValidateFileStreamAsync_LargeNonContainer_IsStillValidated
+- Status: Fixed
+- Commit: `git log --grep "DT-031"`
 
 ### DT-032 — Validator leaves the caller's stream at a changed position
 - Severity: Low
