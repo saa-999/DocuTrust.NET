@@ -141,15 +141,18 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
 
         try
         {
-            using var stream = file.OpenReadStream();
             byte[] header = new byte[5];
-            token.ThrowIfCancellationRequested();
-            if (await stream.ReadAtLeastAsync(header, header.Length, throwOnEndOfStream: false, token) < header.Length || Encoding.ASCII.GetString(header) != "%PDF-")
+            using (var headerStream = file.OpenReadStream())
             {
-                return new DocuTrustFileCheckResult { IsClean = false, Message = "Invalid PDF header signature.", IsScanned = true };
+                token.ThrowIfCancellationRequested();
+                if (await headerStream.ReadAtLeastAsync(header, header.Length, throwOnEndOfStream: false, token) < header.Length || Encoding.ASCII.GetString(header) != "%PDF-")
+                {
+                    return new DocuTrustFileCheckResult { IsClean = false, Message = "Invalid PDF header signature.", IsScanned = true };
+                }
             }
-            stream.Position = 0;
 
+            // Fresh stream instead of rewinding: no Position reset on streams that cannot seek.
+            using var stream = file.OpenReadStream();
             using (PdfDocument.Open(stream, new ParsingOptions()))
             {
                 return new DocuTrustFileCheckResult { IsEncrypted = false, Message = "The PDF file is not encrypted.", IsScanned = true, IsClean = true };

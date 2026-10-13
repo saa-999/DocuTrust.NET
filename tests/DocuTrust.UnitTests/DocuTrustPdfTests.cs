@@ -62,6 +62,21 @@ public class DocuTrustPdfScannerTests
         Assert.True(result.IsClean, result.Message);
     }
 
+    // DT-018: the header check rewound the stream with Position = 0, which throws on non-seekable streams.
+    [Fact]
+    public async Task ScanFileContentAsync_NonSeekableStream_ReturnsVerdict()
+    {
+        var scanner = new DocuTrustPdfScanner();
+        byte[] pdfBytes = CreatePdfWithOpenActionJavaScript();
+        var file = new DocuTrust.Tests.TestSupport.StreamFormFile(
+            () => new DocuTrust.Tests.TestSupport.TrickleStream(pdfBytes, seekable: false), pdfBytes.Length, "malicious.pdf");
+
+        var result = await scanner.ScanFileContentAsync(file);
+
+        Assert.False(result.IsClean);
+        Assert.Contains("JavaScript", result.Message);
+    }
+
     private byte[] CreateCleanPdf()
     {
         var builder = new PdfDocumentBuilder();

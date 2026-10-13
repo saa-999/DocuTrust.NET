@@ -57,20 +57,16 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
                 return new DocuTrustFileCheckResult { IsClean = false, Message = "File exceeds security size limits.", IsScanned = true };
             }
 
-            using var stream = file.OpenReadStream();
-            byte[] header = new byte[4];
-            token.ThrowIfCancellationRequested();
-            _ = await stream.ReadAtLeastAsync(header, header.Length, throwOnEndOfStream: false, token);
-            stream.Position = 0;
+            // Every pass opens a fresh stream from the IFormFile: no Position resets, works for non-seekable streams.
+            byte[] header = await ReadHeaderAsync(file, 4, token);
 
-            if (header[0] == 0x50 && header[1] == 0x4B && header[2] == 0x03 && header[3] == 0x04)
+            if (header.Length == 4 && header[0] == 0x50 && header[1] == 0x4B && header[2] == 0x03 && header[3] == 0x04)
             {
-                return ExtractModernText(stream, token);
+                return ExtractModernText(file, token);
             }
-            else
-            {
-                return await ExtractLegacyTextAsync(stream, token);
-            }
+
+            using var stream = file.OpenReadStream();
+            return await ExtractLegacyTextAsync(stream, token);
         }
         catch (OperationCanceledException)
         {
@@ -92,20 +88,17 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
                 return new DocuTrustFileCheckResult { IsClean = false, Message = "File exceeds security scan size limit.", IsScanned = true };
             }
 
-            using var stream = file.OpenReadStream();
-            byte[] header = new byte[8];
-            token.ThrowIfCancellationRequested();
-            _ = await stream.ReadAtLeastAsync(header, header.Length, throwOnEndOfStream: false, token);
-            stream.Position = 0;
+            byte[] header = await ReadHeaderAsync(file, 8, token);
 
-            if (header.SequenceEqual(new byte[] { 0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1 }))
+            if (header.AsSpan().SequenceEqual(new byte[] { 0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1 }))
             {
+                using var stream = file.OpenReadStream();
                 return await ScanLegacyOfficeAsync(stream, token);
             }
 
-            if (header[0] == 0x50 && header[1] == 0x4B && (header[2] == 0x03 || header[2] == 0x01))
+            if (header.Length >= 4 && header[0] == 0x50 && header[1] == 0x4B && (header[2] == 0x03 || header[2] == 0x01))
             {
-                return ScanModernOffice(stream, token);
+                return ScanModernOffice(file, token);
             }
 
             return new DocuTrustFileCheckResult { IsClean = false, Message = "Unsupported or malformed Office format.", IsScanned = true };
@@ -120,11 +113,24 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
         }
     }
 
-    private DocuTrustFileCheckResult ScanModernOffice(Stream stream, CancellationToken token)
+    private static async Task<byte[]> ReadHeaderAsync(IFormFile file, int count, CancellationToken token)
+    {
+        using var stream = file.OpenReadStream();
+        var header = new byte[count];
+        int read = await stream.ReadAtLeastAsync(header, count, throwOnEndOfStream: false, token);
+        return read == count ? header : header[..read];
+    }
+
+    private DocuTrustFileCheckResult ScanModernOffice(IFormFile file, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
-        using (var zip = new ZipArchive(stream, ZipArchiveMode.Read, true))
+        using (var stream = file.OpenReadStream())
         {
+            // ZipArchive needs random access to the central directory; fail closed instead of throwing.
+            if (!stream.CanSeek)
+                return new DocuTrustFileCheckResult { IsClean = false, Message = "Office package scanning requires a seekable stream.", IsScanned = false };
+
+            using var zip = new ZipArchive(stream, ZipArchiveMode.Read, true);
             if (zip.Entries.Count > FileSize.MaxPackageEntries)
                 return new DocuTrustFileCheckResult { IsClean = false, Message = "Package contains excessive number of parts.", IsScanned = true };
 
@@ -146,7 +152,6 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
             }
         }
 
-        stream.Position = 0;
         var settings = new OpenSettings
         {
             AutoSave = false,
@@ -160,27 +165,30 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
         {
             try
             {
+                using var stream = file.OpenReadStream();
                 using var doc = WordprocessingDocument.Open(stream, false, settings);
                 return InspectWord(doc, token);
             }
             catch (OperationCanceledException) { throw; }
-            catch (InvalidDataException) { stream.Position = 0; }
+            catch (InvalidDataException) { }
 
             try
             {
+                using var stream = file.OpenReadStream();
                 using var doc = SpreadsheetDocument.Open(stream, false, settings);
                 return InspectExcel(doc, token);
             }
             catch (OperationCanceledException) { throw; }
-            catch (InvalidDataException) { stream.Position = 0; }
+            catch (InvalidDataException) { }
 
             try
             {
+                using var stream = file.OpenReadStream();
                 using var doc = PresentationDocument.Open(stream, false, settings);
                 return InspectPowerPoint(doc, token);
             }
             catch (OperationCanceledException) { throw; }
-            catch (InvalidDataException) { stream.Position = 0; }
+            catch (InvalidDataException) { }
 
             return new DocuTrustFileCheckResult
             {
@@ -317,7 +325,7 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
         return new DocuTrustFileCheckResult { IsClean = true, Message = "Legacy heuristics passed.", IsScanned = true };
     }
 
-    private DocuTrustFileCheckResult ExtractModernText(Stream stream, CancellationToken token)
+    private DocuTrustFileCheckResult ExtractModernText(IFormFile file, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
         var sb = new StringBuilder();
@@ -325,6 +333,7 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
         {
             try
             {
+                using var stream = file.OpenReadStream();
                 using var doc = WordprocessingDocument.Open(stream, false);
                 if (doc.MainDocumentPart?.Document?.Body != null)
                 {
@@ -334,13 +343,14 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
                 }
             }
             catch (OperationCanceledException) { throw; }
-            catch { stream.Position = 0; }
+            catch { }
 
             if (sb.Length == 0)
             {
                 try
                 {
-                    using var doc = SpreadsheetDocument.Open(stream, false);
+                    using var stream = file.OpenReadStream();
+                using var doc = SpreadsheetDocument.Open(stream, false);
                     var workbookPart = doc.WorkbookPart;
                     var sheets = workbookPart?.Workbook?.Sheets;
                     if (sheets != null && workbookPart != null)
@@ -358,14 +368,15 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
                     }
                 }
                 catch (OperationCanceledException) { throw; }
-                catch { stream.Position = 0; }
+                catch { }
             }
 
             if (sb.Length == 0)
             {
                 try
                 {
-                    using var doc = PresentationDocument.Open(stream, false);
+                    using var stream = file.OpenReadStream();
+                using var doc = PresentationDocument.Open(stream, false);
                     var presentationPart = doc.PresentationPart;
                     var slides = presentationPart?.Presentation?.SlideIdList;
                     if (slides != null && presentationPart != null)
@@ -383,7 +394,7 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
                     }
                 }
                 catch (OperationCanceledException) { throw; }
-                catch { stream.Position = 0; }
+                catch { }
             }
 
             return new DocuTrustFileCheckResult { IsClean = true, Page = sb.ToString(), Message = "Text extracted from OpenXML format.", IsScanned = true };

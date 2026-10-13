@@ -50,7 +50,7 @@ Empirical probes run before the fixes (scratch program, not committed):
 | DT-015 | Encrypted Office documents (legacy and CFB-wrapped OOXML) reported clean | High | Open |
 | DT-016 | Office results echo `ex.Message` and ZIP entry names (disclosure, log injection) | Medium | Open |
 | DT-017 | Office `GetPageAsync` reports `IsClean = true` without scanning; swallows parse errors | Medium | Open |
-| DT-018 | Scanners reuse one stream with `Position` resets (non-seekable streams crash) | Low | Open |
+| DT-018 | Scanners reuse one stream with `Position` resets (non-seekable streams crash) | Low | Fixed |
 | DT-019 | Undecryptable encrypted PDFs reported `IsClean = true` | High | Open |
 | DT-020 | PDF action chain: depth limit fails open; `/Next` arrays ignored | High | Open |
 | DT-021 | PDF objects that are streams with declared `/Length` > 25 MB are skipped | Medium | Open |
@@ -273,10 +273,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: DocuTrustOfficeScanner.cs:43, :78, :128, :146-162, :346-395; DocuTrustPdfScanner.cs:151
 - Description: Each scanner opens one stream and rewinds it with `stream.Position = 0` between passes. With a non-seekable `OpenReadStream()` this throws `NotSupportedException`, and a failed parser can leave the stream in an undefined state for the next attempt.
 - Attack scenario / PoC: custom streaming `IFormFile` → exception instead of a verdict.
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: Every pass opens a fresh stream with `IFormFile.OpenReadStream()` (the header read, the legacy scan, the ZIP pass, each OpenXML SDK attempt, each text-extraction attempt, and the PDF header/parse passes). No `Position` resets remain. The ZIP pass needs random access and now fails closed (`IsClean = false`, `IsScanned = false`) on a non-seekable stream instead of throwing. Streams opened by the scanners are disposed by the scanners; the caller-owned `IFormFile` is never disposed.
+- Regression test: OfficeModernScanTests.LegacyScan_NonSeekableStream_ReturnsVerdict; OfficeModernScanTests.ModernScan_NonSeekableStream_FailsClosedWithoutThrowing; OfficeModernScanTests.LegacyTextExtraction_NonSeekableStream_ReturnsText; DocuTrustPdfScannerTests.ScanFileContentAsync_NonSeekableStream_ReturnsVerdict
+- Status: Fixed
+- Commit: `git log --grep "DT-018"`
 
 ### DT-019 — Undecryptable encrypted PDFs reported `IsClean = true`
 - Severity: High
