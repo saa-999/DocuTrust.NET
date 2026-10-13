@@ -1,0 +1,553 @@
+# DocuTrust.NET — Security Findings Log
+
+- **Audit date:** 2026-10-13
+- **Commit audited:** `7cd6c36f23f0ae7eda5393db47bcf93b99c4b1d1` (tag/version `v1.0.2`)
+- **Branch with fixes:** `security/audit-2026-10` (local only, nothing pushed)
+- **Scope:** `src/DocuTrust/**`, `tests/DocuTrust.UnitTests/**`, `.github/workflows/build.yml`, NuGet dependency graph.
+
+## Baseline
+
+Toolchain: .NET SDK 8.0.131 (Ubuntu 24.04 `dotnet-sdk-8.0` package), runtime 8.0.31.
+
+| Step | Result |
+| --- | --- |
+| `dotnet restore DocuTrust.slnx` | **Fails**: `MSB4068: The element <Solution> is unrecognized`. `.slnx` needs SDK ≥ 9.0.200, and CI pins `8.0.x` (see DT-038). Projects were restored individually instead. |
+| `dotnet restore tests/DocuTrust.UnitTests/DocuTrust.UnitTests.csproj` | OK (restores the library too). |
+| `dotnet build` | OK, 0 warnings, 0 errors (`TreatWarningsAsErrors` on). |
+| `dotnet test` | **4 passed**, 0 failed, 0 skipped. |
+| `dotnet list package --vulnerable --include-transitive` (library) | `OpenMcdf 3.1.0` (transitive via `FileSignatures 7.0.0`), Moderate: GHSA-jxpf-xq2m-q525 (CVE-2026-41511), GHSA-5qwm-7pvp-w988 (CVE-2026-45785). |
+| same (test project) | `OpenMcdf 3.1.0` (as above); `System.Net.Http 4.3.0` High (GHSA-7jgj-8wvc-jh57); `System.Text.RegularExpressions 4.3.0` High (GHSA-cmhx-cq75-c4mj). Both come via `xunit 2.6.2 → NETStandard.Library 1.6.1`. |
+| `dotnet list package --outdated` (library) | `FileSignatures 7.0.0 → 7.3.0`, `PdfPig 0.1.14 → 0.1.16`. `DocumentFormat.OpenXml 3.5.1` is current. |
+| same (test project) | `Microsoft.NET.Test.Sdk 17.8.0 → 18.11.0`, `PdfPig 0.1.14 → 0.1.16`, `xunit 2.6.2 → 2.9.3`, `xunit.runner.visualstudio 2.5.4 → 4.0.1`. |
+
+Empirical probes run before the fixes (scratch program, not committed):
+
+- An `.xlsx` sent to `DocuTrustOfficeScanner.ScanFileContentAsync` is reported as *"Word document is clean."* (DT-014).
+- An encrypted PDF with an `/OpenAction` JavaScript returns `IsClean = true` (DT-019).
+- .NET 8 `ZipArchive` **does** stop decompression at the declared uncompressed size (a 10 MB entry patched to declare 100 bytes yields 100 bytes). This changes the zip-bomb lead (DT-009).
+- PdfPig 0.1.14 decodes `#xx` escapes in names (`/J#61vaScript` → `JavaScript`) (DT-024).
+- `FileFormatInspector.DetermineFileFormat` seeks the caller's stream to 0, inspects from offset 0, and leaves it at 0 (DT-032).
+- Any upload with the OLE/CFB magic reaches `OpenMcdf` from `ValidateFileAsync` (stack trace `OpenMcdf.Header.set_MiniSectorShift`) (DT-035).
+
+## Summary
+
+| ID | Title | Severity | Status |
+| --- | --- | --- | --- |
+| DT-001 | Integer overflow in custom pool `Rent` (`1 << 31`) | Low | Open |
+| DT-002 | Custom pool `Return` accepts arrays of any length | Low | Open |
+| DT-003 | Pooled buffers holding file contents are never cleared (static pool) | Low | Open |
+| DT-004 | Custom pool retains up to ~12.8 GB of LOH arrays (memory DoS) | High | Open |
+| DT-005 | Non-atomic bucket count check-then-add in custom pool | Low | Open |
+| DT-006 | `(int)stream.Length` narrowing cast; trusts stream length over size check | Medium | Open |
+| DT-007 | Single non-looped `ReadAsync` leaves the tail of legacy files unscanned | Medium | Open |
+| DT-008 | Whole-file string decoding (≈3× memory); UTF-16 only at even offsets; `Ole10Native` check dead | Medium | Open |
+| DT-009 | Zip bomb: no total budget, no ratio limit, CD read before count check, extraction unchecked | High | Open |
+| DT-010 | Macro detection relies on the part name `vbaProject.bin` only | High | Open |
+| DT-011 | Embedded payload detection: case-sensitive, incomplete list, no content sniffing, OLE/nested not inspected | High | Open |
+| DT-012 | DDE detection gaps and fail-open `catch {}` | High | Open |
+| DT-013 | Relationship analysis gaps and exponential traversal | High | Open |
+| DT-014 | Every OOXML package is inspected as Word (Excel/PowerPoint branches dead) | Low | Open |
+| DT-015 | Encrypted Office documents (legacy and CFB-wrapped OOXML) reported clean | High | Open |
+| DT-016 | Office results echo `ex.Message` and ZIP entry names (disclosure, log injection) | Medium | Open |
+| DT-017 | Office `GetPageAsync` reports `IsClean = true` without scanning; swallows parse errors | Medium | Open |
+| DT-018 | Scanners reuse one stream with `Position` resets (non-seekable streams crash) | Low | Open |
+| DT-019 | Undecryptable encrypted PDFs reported `IsClean = true` | High | Open |
+| DT-020 | PDF action chain: depth limit fails open; `/Next` arrays ignored | High | Open |
+| DT-021 | PDF objects that are streams with declared `/Length` > 25 MB are skipped | Medium | Open |
+| DT-022 | Missing PDF action types, annotation subtypes, form-field `/AA`, URI schemes | High | Open |
+| DT-023 | PDF objects off the hard-coded paths are never inspected; no raw-byte defense in depth | Medium | Open |
+| DT-024 | `#xx`-escaped PDF names bypass structural checks | Info | Open |
+| DT-025 | PDF `GetPageAsync` reports `IsClean = true` without a threat scan; file parsed 2–3 times | Medium | Open |
+| DT-026 | No PDF page-count, glyph or extracted-text limits | Medium | Open |
+| DT-027 | PDF/ZIP polyglots not detected | Low | Open |
+| DT-028 | PdfPig 0.1.14 has known infinite-recursion (stack overflow) bugs | High | Open |
+| DT-029 | Empty `expectedExtension` makes `ValidateFileAsync` accept any type, including executables | High | Open |
+| DT-030 | Client filename extension ignored (double extensions, docs claim otherwise) | Medium | Open |
+| DT-031 | Validator has no size limit before container (ZIP/OLE) parsing | Medium | Open |
+| DT-032 | Validator leaves the caller's stream at a changed position | Low | Open |
+| DT-033 | Validator exceptions embed the client filename and full path | Low | Open |
+| DT-034 | Path APIs block forever on FIFOs/devices; no regular-file checks | Medium | Open |
+| DT-035 | Vulnerable `OpenMcdf 3.1.0` (uncatchable infinite loops) reachable from uploads | High | Open |
+| DT-036 | Vulnerable test-only transitive packages (`System.Net.Http`, `System.Text.RegularExpressions`) | Low | Open |
+| DT-037 | `FileSize` constants use `int` arithmetic | Info | Open |
+| DT-038 | CI never runs tests (and cannot read `.slnx` with SDK 8) | Low | Open |
+| DT-039 | No scan time limits | Medium | Open |
+| DT-040 | Content scanners are internal; public API only checks magic bytes | Info | Open |
+| DT-041 | XML parsing: DTD/XXE settings | Info | Open |
+| DT-042 | Thread safety of shared instances (other than the pool) | Info | Open |
+
+---
+
+## Findings
+
+### DT-001 — Integer overflow in custom pool `Rent` (`1 << 31`)
+- Severity: Low
+- CWE: CWE-190
+- Location: src/DocuTrust/Core/Services/DoucTrustMemoryPool.cs:57 (`Rent`)
+- Description: `GetBucketIndex` returns 30 for any size in (2^30, 2^31−1], and `1 << (bucketIndex + 1)` is `1 << 31` = `int.MinValue`. `new T[int.MinValue]` throws `OverflowException`. Sizes come from `(int)stream.Length` (DT-006), so any stream whose length is between 1 GiB and 2 GiB crashes the scan.
+- Attack scenario / PoC: an `IFormFile` whose `Length` passes the 100 MB check but whose `OpenReadStream().Length` is 1.5 GiB (custom/streaming `IFormFile`) → `Rent(1_610_612_736)` → `OverflowException` → `DocuTrustValidationException` instead of a verdict.
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-002 — Custom pool `Return` accepts arrays of any length
+- Severity: Low
+- CWE: CWE-20
+- Location: src/DocuTrust/Core/Services/DoucTrustMemoryPool.cs:61-77 (`Return`)
+- Description: `Return` buckets by `Log2(length − 1)` without checking that the length equals the bucket's rent size (`2^(b+1)`). A 3-byte array lands in the 4-byte bucket and a later `Rent(4)` returns a 3-byte array. Callers then index past the end (`ReadAsync(buffer, 0, length)` throws). Latent today because only pool-created arrays are returned, but one wrong `Return` corrupts the shared static pool for every request.
+- Attack scenario / PoC: not attacker-triggerable in v1.0.2; a maintenance bug would turn into cross-request failures.
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-003 — Pooled buffers holding file contents are never cleared (static pool)
+- Severity: Low
+- CWE: CWE-226
+- Location: src/DocuTrust/Core/Services/DoucTrustMemoryPool.cs:61-66; DocuTrustOfficeScanner.cs:26, :323, :440
+- Description: The pool is a `static` field shared by all scanner instances, and both call sites call `Return(buffer)` with the default `arrayClear = false`. Each request's raw upload bytes stay in pooled arrays for the life of the process and are handed to the next request. Verified: the next request only decodes `[0, bytesRead)`, so the old bytes are not returned in a result today. The lead "leaks to the next request" is therefore not directly observable, but the data remains in memory, crash dumps and heap dumps, and one off-by-one turns it into a cross-tenant disclosure.
+- Attack scenario / PoC: process memory dump, or any future code path that uses `buffer.Length` instead of `bytesRead`.
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-004 — Custom pool retains up to ~12.8 GB of LOH arrays (memory DoS)
+- Severity: High
+- CWE: CWE-770, CWE-401
+- Location: src/DocuTrust/Core/Services/DoucTrustMemoryPool.cs:11, :57, :71-76; DocuTrustOfficeScanner.cs:283, :418
+- Description: The pool rents whole-file arrays rounded up to the next power of two (a 65 MB file gets a 128 MB array) and keeps up to 50 arrays per bucket forever (no trimming, no GC pressure callback). Buckets up to 2^27 can fill: 50 × (2 + 4 + … + 128 MB) ≈ 12.8 GB of permanently rooted Large Object Heap memory.
+- Attack scenario / PoC: 50 concurrent uploads of ~65–100 MB legacy (`D0 CF 11 E0`) files to an endpoint that calls the Office scanner → each rents a 128 MB array → all 50 are returned to the static pool → 6.4 GB retained after the requests finish. Repeat for smaller sizes to fill the other buckets. Even with Kestrel's default 30 MB body limit, ~3.2 GB can be pinned.
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-005 — Non-atomic bucket count check-then-add in custom pool
+- Severity: Low
+- CWE: CWE-362
+- Location: src/DocuTrust/Core/Services/DoucTrustMemoryPool.cs:49-52, :71-76
+- Description: `Volatile.Read(count) < Max` followed by `Add` then `Interlocked.Increment`, and `TryTake` followed by `Interlocked.Decrement`, are separate operations. Under concurrency the counts drift from the real bag sizes, so the 50-array cap in DT-004 is not a real cap.
+- Attack scenario / PoC: concurrent returns overshoot the cap; amplifies DT-004.
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-006 — `(int)stream.Length` narrowing cast; trusts stream length over size check
+- Severity: Medium
+- CWE: CWE-197, CWE-681
+- Location: src/DocuTrust/Core/Services/DocuTrustOfficeScanner.cs:281 (`ScanLegacyOfficeAsync`), :417 (`ExtractLegacyTextAsync`)
+- Description: The size gate checks `IFormFile.Length`, but the allocation uses `(int)stream.Length`. For lengths ≥ 2^31 the cast wraps to a negative value (`ArgumentOutOfRangeException`), and between 2^30 and 2^31 it hits DT-001. The two lengths can differ for non-`FormFile` implementations, so the 100 MB limit does not bound the allocation.
+- Attack scenario / PoC: `IFormFile` with `Length = 10` and a stream reporting 3 GiB → negative rent size → exception; or 1.5 GiB → `OverflowException`.
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-007 — Single non-looped `ReadAsync` leaves the tail of legacy files unscanned
+- Severity: Medium
+- CWE: CWE-693 (root cause: short reads not handled, cf. CWE-252)
+- Location: src/DocuTrust/Core/Services/DocuTrustOfficeScanner.cs:290 (`ScanLegacyOfficeAsync`), :424 (`ExtractLegacyTextAsync`), :42 and :77 (header reads); DocuTrustPdfScanner.cs:147 (header read)
+- Description: `Stream.ReadAsync` may return fewer bytes than requested. Only the first read is scanned, so the rest of the file is never searched for macro indicators, and the result is `IsClean = true`.
+- Attack scenario / PoC: any `IFormFile` whose stream returns data in pieces (network/streaming implementations) with the VBA indicators placed after the first returned block → legacy scan reports *"Legacy heuristics passed."*.
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-008 — Whole-file string decoding (≈3× memory); UTF-16 only at even offsets; `Ole10Native` check dead
+- Severity: Medium
+- CWE: CWE-400, CWE-693
+- Location: src/DocuTrust/Core/Services/DocuTrustOfficeScanner.cs:293-319 (`ScanLegacyOfficeAsync`)
+- Description: (1) The whole file is decoded into an ASCII string and a UTF-16 string: about 3× the file size in LOH allocations per request (a 100 MB file costs ~300 MB). (2) `Encoding.Unicode.GetString` decodes from offset 0 only, so a UTF-16LE keyword starting at an odd byte offset is invisible. (3) `"\x01Ole10Native"` is searched only in the ASCII view, but OLE stream names are stored UTF-16LE in the CFB directory, so the embedded-OLE check never matches.
+- Attack scenario / PoC: a CFB file whose UTF-16LE `AutoOpen` starts at an odd offset → clean. A legacy document with an OLE Package (`\x01Ole10Native`) → clean.
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-009 — Zip bomb: no total budget, no ratio limit, CD read before count check, extraction unchecked
+- Severity: High
+- CWE: CWE-409
+- Location: src/DocuTrust/Core/Services/DocuTrustOfficeScanner.cs:105-126 (`ScanModernOffice`), :329-409 (`ExtractModernText`)
+- Description: The lead says the per-entry check relies on the attacker-declared `entry.Length`. Verified: on .NET 8 `ZipArchive` stops inflating at the declared size, so the declared value is an upper bound and the per-entry 20 MB check is effective. The following gaps remain: (1) no total uncompressed budget: 5,000 entries × 20 MB = 100 GB of inflation/XML parsing is allowed, and the DDE/relationship passes parse every `.rels`, header and footer; (2) no compression-ratio limit (a 20 MB run of zeros compresses to ~20 KB); (3) `zip.Entries.Count` materialises the whole central directory before the 5,000-entry check (millions of `ZipArchiveEntry` objects from a 100 MB file); (4) `GetPageAsync` → `ExtractModernText` performs **no** entry checks and loads `Body.InnerText` through the DOM, so a 2 GB `document.xml` compressed to ~2 MB exhausts memory; (5) nested packages in `embeddings/` are not inspected.
+- Attack scenario / PoC: a `.docx` whose `word/document.xml` inflates to hundreds of MB, sent to text extraction → OOM. Or many 19 MB zero-filled parts → minutes of CPU per request.
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-010 — Macro detection relies on the part name `vbaProject.bin` only
+- Severity: High
+- CWE: CWE-184
+- Location: src/DocuTrust/Core/Services/DocuTrustOfficeScanner.cs:116-117 (`ScanModernOffice`)
+- Description: Office locates the VBA project through the `…/relationships/vbaProject` relationship and the `application/vnd.ms-office.vbaProject` content type, not through the file name. Not checked: renamed VBA parts, `macroEnabled` main content types, `vbaData.xml` (`wordVbaData`), Excel 4.0/XLM macro sheets (`xl/macrosheets/`, `xlMacrosheet`/`xlIntlMacrosheet` relationships, `application/vnd.ms-excel.macrosheet+xml`).
+- Attack scenario / PoC: rename `word/vbaProject.bin` to `word/data.bin` and update the relationship target → *"Word document is clean."*. An `.xlsm` whose only payload is an XLM macro sheet → clean.
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-011 — Embedded payload detection: case-sensitive, incomplete list, no content sniffing, OLE/nested not inspected
+- Severity: High
+- CWE: CWE-184
+- Location: src/DocuTrust/Core/Services/DocuTrustOfficeScanner.cs:21-24, :119-124 (`ScanModernOffice`)
+- Description: (1) `entry.FullName.Contains("embeddings/")` is case-sensitive (`word/Embeddings/x.exe` passes) and ignores executables stored elsewhere in the package. (2) The extension block-list misses `.hta .lnk .cmd .msi .dll .cpl .pif .reg .iso .scf .sct .chm .xll`, macro-enabled Office types and more. (3) Detection is by extension only: `payload.dat` containing a PE (`MZ`) passes. (4) `oleObject*.bin` (OLE Package / `Ole10Native` carriers, Equation Editor `Equation Native` streams, embedded legacy documents with VBA) are not inspected. (5) Embedded OOXML packages (`.docm` inside `.docx`) are not inspected.
+- Attack scenario / PoC: `word/embeddings/oleObject1.bin` = OLE Package wrapping `invoice.exe` → clean.
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-012 — DDE detection gaps and fail-open `catch {}`
+- Severity: High
+- CWE: CWE-184, CWE-636
+- Location: src/DocuTrust/Core/Services/DocuTrustOfficeScanner.cs:184-193 (`InspectWord`), :219-250 (`PartContainsDDE`)
+- Description: (1) `Contains("DDE")` is case-sensitive, but Word accepts `ddeauto`. (2) `w:fldSimple/@w:instr` is ignored. (3) Each `w:instrText` is checked alone, so `DD` + `EAUTO` split across runs passes. (4) Only main/header/footer parts are scanned; footnotes, endnotes, comments and glossary are not. (5) `catch { }` returns false on any parse error (fail-open). (6) Excel DDE (`externalLinks/*.xml` `<ddeLink>`, `=cmd|'/c …'!A0` formulas) is not checked.
+- Attack scenario / PoC: `<w:fldSimple w:instr=" DDEAUTO c:\\windows\\system32\\cmd.exe &quot;/k calc&quot; "/>` → *"Word document is clean."*.
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-013 — Relationship analysis gaps and exponential traversal
+- Severity: High
+- CWE: CWE-184, CWE-407
+- Location: src/DocuTrust/Core/Services/DocuTrustOfficeScanner.cs:252-270 (`HasSuspiciousRelationships`)
+- Description: (1) No visited set: shared parts are revisited once per incoming path, so a chain of parts each referenced twice costs 2^depth visits (CPU DoS). (2) Only `ExternalRelationships` are inspected, but the SDK puts hyperlinks in `HyperlinkRelationships`. (3) Protocol-handler targets (`ms-msdt:` Follina-style, `search-ms:`, `ms-word:`, …) and `//host/share` UNC targets are not flagged (`\\host\share` happens to parse as `file://` and is caught). (4) Remote `frame` and `subDocument` relationships (auto-loaded on open) are not flagged. (5) PowerPoint `ppaction://program` / `ppaction://macro` actions are not checked. (6) `Contains("..")` flags benign URLs and misses encoded traversal. (7) Depth overflow throws `SecurityException`, whose message is echoed (DT-016).
+- Attack scenario / PoC: an external hyperlink relationship to `ms-msdt:/id PCWDiagnostic …`, or a slide with `<a:hlinkHover action="ppaction://program" r:id="rIdX"/>` → clean.
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-014 — Every OOXML package is inspected as Word (Excel/PowerPoint branches dead)
+- Severity: Low
+- CWE: CWE-670
+- Location: src/DocuTrust/Core/Services/DocuTrustOfficeScanner.cs:138-169 (`ScanModernOffice`)
+- Description: `WordprocessingDocument.Open` succeeds on spreadsheet and presentation packages, so `InspectExcel`/`InspectPowerPoint` never run and type-specific checks would be skipped. Verified: an `.xlsx` is reported as *"Word document is clean."*. Also only `InvalidDataException` falls through to the next type, so any other open failure aborts the chain.
+- Attack scenario / PoC: any workbook/presentation; impact today is wrong classification plus Word-only checks running on a workbook.
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-015 — Encrypted Office documents (legacy and CFB-wrapped OOXML) reported clean
+- Severity: High
+- CWE: CWE-636
+- Location: src/DocuTrust/Core/Services/DocuTrustOfficeScanner.cs:80-83, :272-327 (`ScanLegacyOfficeAsync`)
+- Description: Password-protected `.docx/.xlsx/.pptx` are CFB containers (`EncryptionInfo` + `EncryptedPackage`), so they take the legacy keyword path. Their content is ciphertext, no keyword matches, and the result is `IsClean = true`, `IsEncrypted = false`. RC4/CryptoAPI-encrypted `.doc` (`fEncrypted` FIB flag), `.xls` (`FILEPASS` record) and `.ppt` (`EncryptedSummary`) behave the same.
+- Attack scenario / PoC: password-protect a macro-enabled `.docm` and upload it; the victim is given the password in the lure → *"Legacy heuristics passed."*.
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-016 — Office results echo `ex.Message` and ZIP entry names (disclosure, log injection)
+- Severity: Medium
+- CWE: CWE-209, CWE-117
+- Location: src/DocuTrust/Core/Services/DocuTrustOfficeScanner.cs:114, :123, :177, :406
+- Description: `Message` embeds `entry.FullName` (attacker-controlled: may contain CR/LF, control characters, or misleading text) and raw `ex.Message` from System.IO.Packaging / the OpenXML SDK (internal part URIs, parser details). Applications commonly log or return `Message`.
+- Attack scenario / PoC: an entry named `word/embeddings/a.exe\r\n[INFO] scan ok` forges log lines; exception text discloses internals to API clients.
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-017 — Office `GetPageAsync` reports `IsClean = true` without scanning; swallows parse errors
+- Severity: Medium
+- CWE: CWE-636
+- Location: src/DocuTrust/Core/Services/DocuTrustOfficeScanner.cs:29-62, :329-409, :411-444
+- Description: Text extraction returns `IsClean = true` for any input. Macro-laden documents, non-Office binaries routed to the "legacy" path, and packages that no SDK type can open (`catch { }` everywhere, empty text) are all reported clean. Combined with DT-009 (no size checks), extraction is also the easiest DoS path.
+- Attack scenario / PoC: `GetPageAsync` on a `.docm` with VBA → `IsClean = true`; on an `.exe` → `IsClean = true` with "strings".
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-018 — Scanners reuse one stream with `Position` resets (non-seekable streams crash)
+- Severity: Low
+- CWE: CWE-754
+- Location: DocuTrustOfficeScanner.cs:43, :78, :128, :146-162, :346-395; DocuTrustPdfScanner.cs:151
+- Description: Each scanner opens one stream and rewinds it with `stream.Position = 0` between passes. With a non-seekable `OpenReadStream()` this throws `NotSupportedException`, and a failed parser can leave the stream in an undefined state for the next attempt.
+- Attack scenario / PoC: custom streaming `IFormFile` → exception instead of a verdict.
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-019 — Undecryptable encrypted PDFs reported `IsClean = true`
+- Severity: High
+- CWE: CWE-636
+- Location: src/DocuTrust/Core/Services/DocuTrustPdfScanner.cs:162-165 (`CheckEncryptionAsync`), :24-25, :80-81
+- Description: `PdfDocumentEncryptedException` produces `IsClean = true, IsEncrypted = true` and no content is scanned. `GetPageAsync` returns that result directly. Verified with a PDF carrying `/OpenAction` JavaScript and a `/Standard` handler with an unknown user password.
+- Attack scenario / PoC: encrypt a malicious PDF with a user password, send the password in the phishing lure → `IsClean = true`.
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-020 — PDF action chain: depth limit fails open; `/Next` arrays ignored
+- Severity: High
+- CWE: CWE-636
+- Location: src/DocuTrust/Core/Services/DocuTrustPdfScanner.cs:213, :238-241 (`IsActionMalicious`)
+- Description: Past `MaxNestingDepth` (15) the method returns `false` ("not malicious"). `/Next` may be a single action or an **array** of actions (ISO 32000-1 §12.6.2); an array resolves to `null` and is ignored. There is no visited set (cycles rely on the fail-open depth limit).
+- Attack scenario / PoC: `/OpenAction << /S /GoTo /D [...] /Next [ 5 0 R ] >>` with object 5 a JavaScript action, or a chain of 16 `GoTo` actions ending in JavaScript → clean.
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-021 — PDF objects that are streams with declared `/Length` > 25 MB are skipped
+- Severity: Medium
+- CWE: CWE-636
+- Location: src/DocuTrust/Core/Services/DocuTrustPdfScanner.cs:318-324 (`ResolveToDictionary`)
+- Description: When an indirect object is a stream whose dictionary declares `/Length` above 25 MB, `null` is returned and callers treat the object as benign. The check uses the attacker-declared length (PdfPig's lenient parser recovers the real end of stream), and the bytes are already loaded by `GetObject`, so the skip saves nothing.
+- Attack scenario / PoC: `3 0 obj << /S /JavaScript /JS (…) /Length 99999999 >> stream … endstream` as the `/OpenAction` target → clean.
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-022 — Missing PDF action types, annotation subtypes, form-field `/AA`, URI schemes
+- Severity: High
+- CWE: CWE-184
+- Location: src/DocuTrust/Core/Services/DocuTrustPdfScanner.cs:218-236 (`IsActionMalicious`), :280-291 (`IsAnnotationListMalicious`), :297-306 (`IsAcroFormSuspicious`)
+- Description: Not detected: `/URI` actions with `javascript:`, `file:`, UNC or other non-web schemes; `/SubmitForm`, `/GoToE`, `/Rendition`, `/RichMediaExecute`, `/Sound`, `/Movie`; a `/JS` key without `/S`; annotation subtypes `/RichMedia`, `/Screen`, `/Movie`, `/Sound`, `/3D`; AcroForm field `/AA` and `/A` (keystroke/format/calculate scripts on fields without widgets). Comparisons are case-sensitive.
+- Attack scenario / PoC: `/AcroForm << /Fields [6 0 R] >>` with field 6 carrying `/AA << /C << /S /JavaScript /JS (…) >> >>` → clean; link annotation with `/A << /S /URI /URI (javascript:…) >>` → clean.
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-023 — PDF objects off the hard-coded paths are never inspected; no raw-byte defense in depth
+- Severity: Medium
+- CWE: CWE-693
+- Location: src/DocuTrust/Core/Services/DocuTrustPdfScanner.cs:74-132 (`ScanFileContentAsync`)
+- Description: Only the catalog `/OpenAction`, `/Names`, `/AA`, `/AcroForm` and page `/AA`/`/Annots` are checked. Actions reachable through outlines (bookmarks), named destinations, structure trees, nested annotation dictionaries (e.g. `/Parent`, `/Popup`) and objects that a different reader may resolve differently (unreferenced objects, earlier incremental-update revisions) are never examined. No raw-byte scan exists to catch what the parser did not surface.
+- Attack scenario / PoC: an outline item `/A << /S /Launch /F (cmd.exe) >>` → clean; JavaScript in an older incremental-update revision.
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-024 — `#xx`-escaped PDF names bypass structural checks
+- Severity: Info
+- CWE: CWE-180
+- Location: src/DocuTrust/Core/Services/DocuTrustPdfScanner.cs (all `NameToken` comparisons)
+- Description: Lead: `/J#61vaScript` would not equal `JavaScript`. Probe result: PdfPig decodes `#xx` escapes while tokenising (`NameToken.Data == "JavaScript"`), and the existing scanner already flags such a file. The raw-byte scan added for DT-023 must decode escapes itself.
+- Attack scenario / PoC: `/S /J#61vaScript` → detected at baseline.
+- Fix: TBD (expected: no code change, regression test only)
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-025 — PDF `GetPageAsync` reports `IsClean = true` without a threat scan; file parsed 2–3 times
+- Severity: Medium
+- CWE: CWE-636, CWE-400
+- Location: src/DocuTrust/Core/Services/DocuTrustPdfScanner.cs:18-72 (`GetPageAsync`), :79-84, :153
+- Description: `GetPageAsync` checks only encryption and then returns `IsClean = true` together with the text, even for PDFs with JavaScript or `/Launch`. Both public methods parse the file twice (`CheckEncryptionAsync` + main parse), and the existing `GetPages()` loop in the scan parses every page's content stream just to read annotations.
+- Attack scenario / PoC: `GetPageAsync(1, 1, maliciousPdf)` → `IsClean = true`.
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-026 — No PDF page-count, glyph or extracted-text limits
+- Severity: Medium
+- CWE: CWE-770
+- Location: src/DocuTrust/Core/Services/DocuTrustPdfScanner.cs:30-46, :53-61 (`GetPageAsync`)
+- Description: All pages are extracted into one `StringBuilder` without a page cap, a per-page glyph cap (nearest-neighbour word extraction is super-linear) or a total-character cap.
+- Attack scenario / PoC: a 150 MB PDF with tens of thousands of pages, or one page with millions of glyphs → CPU/memory exhaustion.
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-027 — PDF/ZIP polyglots not detected
+- Severity: Low
+- CWE: CWE-693
+- Location: src/DocuTrust/Core/Services/DocuTrustPdfScanner.cs (no check)
+- Description: A valid PDF with a ZIP archive appended (or embedded between objects) passes as a clean PDF. The same bytes open as a ZIP/JAR/OOXML package in other consumers (ZIP readers locate the end-of-central-directory record from the end of the file).
+- Attack scenario / PoC: `cat clean.pdf payload.zip > upload.pdf` → clean PDF; a downstream service or user opens it as an archive.
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-028 — PdfPig 0.1.14 has known infinite-recursion (stack overflow) bugs
+- Severity: High
+- CWE: CWE-674, CWE-1395
+- Location: src/DocuTrust/DocuTrust.csproj:33 (`PdfPig 0.1.14`)
+- Description: PdfPig 0.1.15 and 0.1.16 fix unbounded recursion in composite-glyph parsing (#1237, #1347), colour-space resolution (#1354) and CMap parsing (#1394), and add a stack-depth guard for nested objects. In .NET a `StackOverflowException` cannot be caught: one hostile PDF terminates the whole ASP.NET Core process.
+- Attack scenario / PoC: upload a PDF with a self-referencing composite glyph or colour space → host process crash (repeatable DoS).
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-029 — Empty `expectedExtension` makes `ValidateFileAsync` accept any type, including executables
+- Severity: High
+- CWE: CWE-434
+- Location: src/DocuTrust/Core/Services/DocuTrustFileScanner.cs:224-246 (`ValidateFileAsync`)
+- Description: With `expectedExtension` null/empty, any recognised format (PE executable, ELF, MSI, JAR, …) returns `IsValid = true`. The other two validation methods throw for the same input, so the behaviour is inconsistent and fails open.
+- Attack scenario / PoC: an application that passes an optional/empty "expected type" from configuration accepts `malware.exe` as valid.
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-030 — Client filename extension ignored (double extensions, docs claim otherwise)
+- Severity: Medium
+- CWE: CWE-434
+- Location: src/DocuTrust/Core/Services/DocuTrustFileScanner.cs:203-292 (`ValidateFileAsync`); docs/getting-started.md ("This checks both the extension AND the magic bytes")
+- Description: Only magic bytes are compared with `expectedExtension`; `IFormFile.FileName` is never checked. Applications that store files under the client-supplied name end up with `report.pdf.html` / `x.pdf.exe` / `x.html` files whose bytes are a valid PDF, which leads to stored XSS or execution depending on the serving stack.
+- Attack scenario / PoC: upload `<valid PDF bytes>` named `invoice.html` with `expectedExtension = ".pdf"` → `IsValid = true`.
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-031 — Validator has no size limit before container (ZIP/OLE) parsing
+- Severity: Medium
+- CWE: CWE-400
+- Location: src/DocuTrust/Core/Services/DocuTrustFileScanner.cs:42, :102, :165, :222
+- Description: `FileFormatInspector` opens ZIP-based (OOXML) candidates with `ZipArchive` and OLE candidates with `OpenMcdf` to tell formats apart. None of the validation methods applies `FileSize.MaxFileSizeBytes`, so arbitrarily large containers (huge central directories, see DT-009) are parsed by a plain "check the type" call.
+- Attack scenario / PoC: multi-GB ZIP with millions of central-directory entries passed to `ValidateFileStreamAsync`.
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-032 — Validator leaves the caller's stream at a changed position
+- Severity: Low
+- CWE: CWE-664
+- Location: src/DocuTrust/Core/Services/DocuTrustFileScanner.cs:102 (`ValidateFileStreamAsync`)
+- Description: Verified: the inspector seeks to 0, reads, and leaves the stream at 0 regardless of where the caller had positioned it. Callers that then save/forward the stream from their own position get wrong data.
+- Attack scenario / PoC: functional integrity issue; a caller at offset N saves a different byte range than it validated.
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-033 — Validator exceptions embed the client filename and full path
+- Severity: Low
+- CWE: CWE-209, CWE-117
+- Location: src/DocuTrust/Core/Services/DocuTrustFileScanner.cs:82, :197, :288
+- Description: `DocuTrustValidationException` messages contain `file.FileName` (attacker-controlled, may contain CR/LF) and full server paths. Exception messages are often logged verbatim or returned by default error handlers.
+- Attack scenario / PoC: upload a malformed OLE file named `x\r\n2026-10-13 INFO user=admin login ok.doc` → forged log line; path disclosure via error pages.
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-034 — Path APIs block forever on FIFOs/devices; no regular-file checks
+- Severity: Medium
+- CWE: CWE-400, CWE-22, CWE-59
+- Location: src/DocuTrust/Core/Services/DocuTrustFileScanner.cs:41 (`ValidateFilePathAsync`), :163 (`GetFileTypeAsync`)
+- Description: `new FileStream(path, …)` on a FIFO blocks in `open(2)` until a writer appears (thread-pool starvation); character devices (`/dev/tty`) block on read. Directories produce exceptions that include the path. Path traversal, symlinks and UNC paths (Windows: NTLM authentication to a remote host) are the caller's responsibility but are not documented.
+- Attack scenario / PoC: application validates a user-influenced path such as an upload staging name; a FIFO in that location hangs the request thread forever.
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-035 — Vulnerable `OpenMcdf 3.1.0` (uncatchable infinite loops) reachable from uploads
+- Severity: High
+- CWE: CWE-835, CWE-1395
+- Location: src/DocuTrust/DocuTrust.csproj:32 (`FileSignatures 7.0.0` → `OpenMcdf 3.1.0`)
+- Description: CVE-2026-41511 / GHSA-jxpf-xq2m-q525 (fixed 3.1.3) and CVE-2026-45785 / GHSA-5qwm-7pvp-w988 (fixed 3.1.4): a CFB directory whose sibling links form a cycle makes enumeration/lookup loop forever without throwing. Verified that `ValidateFileAsync` drives `OpenMcdf` for any file with the OLE magic, so a few hundred bytes hang a request thread permanently.
+- Attack scenario / PoC: upload a crafted `.doc` with a directory cycle repeatedly → thread-pool exhaustion.
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-036 — Vulnerable test-only transitive packages
+- Severity: Low
+- CWE: CWE-1395
+- Location: tests/DocuTrust.UnitTests/DocuTrust.UnitTests.csproj:16 (`xunit 2.6.2` → `NETStandard.Library 1.6.1`)
+- Description: `System.Net.Http 4.3.0` (GHSA-7jgj-8wvc-jh57) and `System.Text.RegularExpressions 4.3.0` (GHSA-cmhx-cq75-c4mj) are restored for the test project. Not shipped in the package, but they run on developer machines and CI and keep `--vulnerable` noisy.
+- Attack scenario / PoC: n/a (test tooling).
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-037 — `FileSize` constants use `int` arithmetic
+- Severity: Info
+- CWE: CWE-190
+- Location: src/DocuTrust/Core/Constants/FileSize.cs:5-9
+- Description: `100 * 1024 * 1024` is evaluated as `int` before widening. Verified reasoning: these are constant expressions, so raising one past 2,047 MB is a **compile-time** error (CS0220), not a silent runtime overflow. Maintenance hazard only.
+- Attack scenario / PoC: none.
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-038 — CI never runs tests (and cannot read `.slnx` with SDK 8)
+- Severity: Low
+- CWE: CWE-1053 (process)
+- Location: .github/workflows/build.yml:1-12
+- Description: The workflow only restores and builds. `dotnet restore` at the root picks up `DocuTrust.slnx`, which the pinned SDK 8.0.x cannot read, so the build itself likely fails. No `dotnet test`, no vulnerable-package gate, no `permissions:` block (default token scope), and `actions/checkout@v3`/`setup-dotnet@v3` are deprecated (Node 16).
+- Attack scenario / PoC: security regressions merge unnoticed.
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-039 — No scan time limits
+- Severity: Medium
+- CWE: CWE-400
+- Location: DocuTrustOfficeScanner.cs, DocuTrustPdfScanner.cs (public entry points)
+- Description: Scans run until completion unless the caller passes a cancellable token. Pathological but in-limit inputs (deep relationship graphs, huge glyph counts, complex XML) can hold a request thread for minutes.
+- Attack scenario / PoC: a handful of slow-to-parse uploads exhausts the thread pool.
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-040 — Content scanners are internal; public API only checks magic bytes
+- Severity: Info
+- CWE: CWE-1059 (documentation)
+- Location: src/DocuTrust/Core/Services/DocuTrustPdfScanner.cs:15, DocuTrustOfficeScanner.cs:18, Extensions/DocuTrustExtensions.cs:20-21, README.md "Features"
+- Description: `DocuTrustPdfScanner` and `DocuTrustOfficeScanner` are `internal`, so consumers cannot call them (the samples would not compile outside the assembly). `AddDocuTrust` registers them, but they cannot be resolved by type. The README advertises macro/DDE/JavaScript scanning, so consumers who call `IDocuTrustFileValidator` believe they get content scanning but only get magic-byte checks.
+- Attack scenario / PoC: a consumer relies on `ValidateFileAsync(file, ".docx")` to block macro documents → macros are accepted.
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-041 — XML parsing: DTD/XXE settings
+- Severity: Info
+- CWE: CWE-611, CWE-776
+- Location: DocuTrustOfficeScanner.cs:227-233 (`PartContainsDDE`); OpenXML SDK / System.IO.Packaging internal readers
+- Description: Audited every XML load path. `PartContainsDDE` uses `DtdProcessing.Prohibit` + `XmlResolver = null`; System.IO.Packaging and the OpenXML SDK 3.x create readers with `DtdProcessing.Prohibit` (default on .NET Core) and no resolver. No `XmlDocument`/`XDocument` loads with DTDs exist. Expected verdict: not an issue; new XML readers added by this audit must keep the same settings.
+- Attack scenario / PoC: `<!DOCTYPE x [<!ENTITY e SYSTEM "file:///etc/passwd">]>` in a part.
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+### DT-042 — Thread safety of shared instances (other than the pool)
+- Severity: Info
+- CWE: CWE-362
+- Location: DocuTrustOfficeScanner.cs:21 (`MaliciousExts`), DocuTrustFileScanner.cs:14 (`_inspector`)
+- Description: Reviewed all static/shared state. `MaliciousExts` is a static `HashSet` that is only read after type initialisation (safe for concurrent reads). `FileFormatInspector` holds a `readonly IEnumerable<FileFormat>` and no mutable state (verified by reflection), and `DocuTrustFileScanner` is registered scoped. The only shared mutable state is the custom pool (DT-003/DT-005).
+- Attack scenario / PoC: none.
+- Fix: TBD
+- Regression test: TBD
+- Status: Open
+- Commit: —
+
+---
+
+## Breaking changes / Recommendations
+
+_To be completed as fixes land._
+
+## Residual risks
+
+_To be completed as fixes land._
