@@ -28,4 +28,15 @@ public class DependencyVersionTests
         Assert.NotNull(version);
         Assert.True(version >= new Version(7, 3, 0), $"FileSignatures {version} pulls a vulnerable OpenMcdf; 7.3.0 or later is required.");
     }
+
+    // DT-028: PdfPig 0.1.15/0.1.16 fix unbounded recursion (uncatchable stack overflow) in glyph,
+    // colour-space and CMap parsing and add a nesting-depth guard.
+    [Fact]
+    public void PdfPig_ResolvedVersion_IncludesRecursionFixes()
+    {
+        var version = typeof(UglyToad.PdfPig.PdfDocument).Assembly.GetName().Version;
+
+        Assert.NotNull(version);
+        Assert.True(version >= new Version(0, 1, 16), $"PdfPig {version} has known infinite-recursion bugs; 0.1.16 or later is required.");
+    }
 }

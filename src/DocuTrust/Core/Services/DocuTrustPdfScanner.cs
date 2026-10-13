@@ -215,7 +215,7 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
         var actionDict = ResolveToDictionary(token, pdf, cancellationToken);
         if (actionDict == null) return false;
 
-        if (actionDict.TryGet(NameToken.S, out NameToken? s) && s != null)
+        if (actionDict.TryGet(NameToken.S, out NameToken s))
         {
             string actionType = s.Data;
             if (actionType == "JavaScript" || actionType == "JS")
@@ -284,7 +284,7 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
                     return true;
                 }
                 
-                if (annot.TryGet(NameToken.Subtype, out NameToken? subtype) && subtype != null && subtype.Data == "FileAttachment")
+                if (annot.TryGet(NameToken.Subtype, out NameToken subtype) && subtype.Data == "FileAttachment")
                 {
                     message = "File attachment annotation detected.";
                     return true;
@@ -317,7 +317,7 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
                 if (obj.Data is DictionaryToken dict) return dict;
                 if (obj.Data is StreamToken stream)
                 {
-                    if (stream.StreamDictionary.TryGet(NameToken.Length, out NumericToken? len) && len != null && len.Long > FileSize.MaxEmbeddedStreamSize)
+                    if (stream.StreamDictionary.TryGet(NameToken.Length, out NumericToken len) && len.Long > FileSize.MaxEmbeddedStreamSize)
                     {
                         return null;
                     }

@@ -60,7 +60,7 @@ Empirical probes run before the fixes (scratch program, not committed):
 | DT-025 | PDF `GetPageAsync` reports `IsClean = true` without a threat scan; file parsed 2–3 times | Medium | Open |
 | DT-026 | No PDF page-count, glyph or extracted-text limits | Medium | Open |
 | DT-027 | PDF/ZIP polyglots not detected | Low | Open |
-| DT-028 | PdfPig 0.1.14 has known infinite-recursion (stack overflow) bugs | High | Open |
+| DT-028 | PdfPig 0.1.14 has known infinite-recursion (stack overflow) bugs | High | Fixed |
 | DT-029 | Empty `expectedExtension` makes `ValidateFileAsync` accept any type, including executables | High | Open |
 | DT-030 | Client filename extension ignored (double extensions, docs claim otherwise) | Medium | Open |
 | DT-031 | Validator has no size limit before container (ZIP/OLE) parsing | Medium | Open |
@@ -383,10 +383,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: src/DocuTrust/DocuTrust.csproj:33 (`PdfPig 0.1.14`)
 - Description: PdfPig 0.1.15 and 0.1.16 fix unbounded recursion in composite-glyph parsing (#1237, #1347), colour-space resolution (#1354) and CMap parsing (#1394), and add a stack-depth guard for nested objects. In .NET a `StackOverflowException` cannot be caught: one hostile PDF terminates the whole ASP.NET Core process.
 - Attack scenario / PoC: upload a PDF with a self-referencing composite glyph or colour space → host process crash (repeatable DoS).
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: Upgraded `PdfPig` 0.1.14 → 0.1.16 in the library and the test project. 0.1.16 adds nullable annotations, so three `TryGet` call sites were adapted (no behaviour change). Not reproduced in-house (crafting a host-crashing PDF is out of scope); the guard is a version check on the resolved runtime assembly. Remaining stack-overflow risk in third-party parsers is documented under Residual risks.
+- Regression test: DependencyVersionTests.PdfPig_ResolvedVersion_IncludesRecursionFixes
+- Status: Fixed
+- Commit: `git log --grep "DT-028"`
 
 ### DT-029 — Empty `expectedExtension` makes `ValidateFileAsync` accept any type, including executables
 - Severity: High
