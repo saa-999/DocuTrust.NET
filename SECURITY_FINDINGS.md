@@ -73,7 +73,7 @@ Empirical probes run before the fixes (scratch program, not committed):
 | DT-038 | CI never runs tests (and cannot read `.slnx` with SDK 8) | Low | Open |
 | DT-039 | No scan time limits | Medium | Fixed |
 | DT-040 | Content scanners are internal; public API only checks magic bytes | Info | Open |
-| DT-041 | XML parsing: DTD/XXE settings | Info | Open |
+| DT-041 | XML parsing: DTD/XXE settings | Info | Not an issue |
 | DT-042 | Thread safety of shared instances (other than the pool) | Info | Open |
 
 ---
@@ -526,10 +526,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: DocuTrustOfficeScanner.cs:227-233 (`PartContainsDDE`); OpenXML SDK / System.IO.Packaging internal readers
 - Description: Audited every XML load path. `PartContainsDDE` uses `DtdProcessing.Prohibit` + `XmlResolver = null`; System.IO.Packaging and the OpenXML SDK 3.x create readers with `DtdProcessing.Prohibit` (default on .NET Core) and no resolver. No `XmlDocument`/`XDocument` loads with DTDs exist. Expected verdict: not an issue; new XML readers added by this audit must keep the same settings.
 - Attack scenario / PoC: `<!DOCTYPE x [<!ENTITY e SYSTEM "file:///etc/passwd">]>` in a part.
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: No vulnerability at baseline: every reader DocuTrust created prohibited DTDs, and System.IO.Packaging / OpenXML SDK 3.x use `DtdProcessing.Prohibit` with no resolver on .NET 8, so no entity is ever resolved or expanded. (The *fail-open* handling of the resulting parse error was a real bug, fixed as DT-012.) All XML readers added during this audit go through `SafeXml.Create`: a fresh `XmlReaderSettings` per reader, `DtdProcessing.Prohibit`, `XmlResolver = null`, `MaxCharactersFromEntities = 0`. Any DTD is an `XmlException` and the part fails closed.
+- Regression test: XmlSafetyTests.SafeXml_RejectsDocumentTypeDefinitions; XmlSafetyTests.SafeXml_RejectsEntityExpansion; XmlSafetyTests.OfficeScan_ExternalEntityInAnyXmlPart_FailsClosedWithoutResolving (body, .rels and [Content_Types].xml; the entity targets a real temp file whose content is never read)
+- Status: Not an issue
+- Commit: `git log --grep "DT-041"` (tests only)
 
 ### DT-042 — Thread safety of shared instances (other than the pool)
 - Severity: Info
