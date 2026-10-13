@@ -72,7 +72,7 @@ Empirical probes run before the fixes (scratch program, not committed):
 | DT-037 | `FileSize` constants use `int` arithmetic | Info | Fixed |
 | DT-038 | CI never runs tests (and cannot read `.slnx` with SDK 8) | Low | Fixed |
 | DT-039 | No scan time limits | Medium | Fixed |
-| DT-040 | Content scanners are internal; public API only checks magic bytes | Info | Open |
+| DT-040 | Content scanners are internal; public API only checks magic bytes | Info | Open – Recommendation |
 | DT-041 | XML parsing: DTD/XXE settings | Info | Not an issue |
 | DT-042 | Thread safety of shared instances (other than the pool) | Info | Not an issue |
 
@@ -515,9 +515,9 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: src/DocuTrust/Core/Services/DocuTrustPdfScanner.cs:15, DocuTrustOfficeScanner.cs:18, Extensions/DocuTrustExtensions.cs:20-21, README.md "Features"
 - Description: `DocuTrustPdfScanner` and `DocuTrustOfficeScanner` are `internal`, so consumers cannot call them (the samples would not compile outside the assembly). `AddDocuTrust` registers them, but they cannot be resolved by type. The README advertises macro/DDE/JavaScript scanning, so consumers who call `IDocuTrustFileValidator` believe they get content scanning but only get magic-byte checks.
 - Attack scenario / PoC: a consumer relies on `ValidateFileAsync(file, ".docx")` to block macro documents → macros are accepted.
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
+- Fix: Not changed. Exposing the scanners is an API design decision (new public interface, options and result semantics) that the owner should make; it is additive and therefore non-breaking. Recommended shape: a public `IDocuTrustContentScanner` with `ScanAsync(IFormFile, CancellationToken)` returning `DocuTrustFileCheckResult`, registered by `AddDocuTrust`, plus a public options type for the limits in `FileSize`. Until then the README should state that `IDocuTrustFileValidator` identifies file types only. The XML docs of `ValidateFileAsync` now say so (DT-034).
+- Regression test: n/a
+- Status: Open – Recommendation
 - Commit: —
 
 ### DT-041 — XML parsing: DTD/XXE settings
