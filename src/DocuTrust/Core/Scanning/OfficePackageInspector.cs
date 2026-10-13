@@ -117,14 +117,14 @@ internal sealed class OfficePackageInspector
             token.ThrowIfCancellationRequested();
 
             if (entry.Length > _limits.MaxPartBytes)
-                return Threat($"Part '{entry.FullName}' exceeds safety size limit.");
+                return Threat("A package part exceeds the safety size limit.");
 
             var nameThreat = MacroPartNameThreat(entry.FullName);
             if (nameThreat != null)
                 return Threat(nameThreat);
 
             if (DangerousExtensions.Contains(Path.GetExtension(entry.FullName.TrimEnd('.', ' '))))
-                return Threat($"Suspicious embedded executable found: {entry.FullName}");
+                return Threat(ExecutableMessage);
 
             if (entry == contentTypesEntry || entry == rootRelsEntry)
                 continue;

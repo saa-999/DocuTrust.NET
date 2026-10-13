@@ -48,7 +48,7 @@ Empirical probes run before the fixes (scratch program, not committed):
 | DT-013 | Relationship analysis gaps and exponential traversal | High | Fixed |
 | DT-014 | Every OOXML package is inspected as Word (Excel/PowerPoint branches dead) | Low | Fixed |
 | DT-015 | Encrypted Office documents (legacy and CFB-wrapped OOXML) reported clean | High | Fixed |
-| DT-016 | Office results echo `ex.Message` and ZIP entry names (disclosure, log injection) | Medium | Open |
+| DT-016 | Office results echo `ex.Message` and ZIP entry names (disclosure, log injection) | Medium | Fixed |
 | DT-017 | Office `GetPageAsync` reports `IsClean = true` without scanning; swallows parse errors | Medium | Open |
 | DT-018 | Scanners reuse one stream with `Position` resets (non-seekable streams crash) | Low | Fixed |
 | DT-019 | Undecryptable encrypted PDFs reported `IsClean = true` | High | Open |
@@ -251,10 +251,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: src/DocuTrust/Core/Services/DocuTrustOfficeScanner.cs:114, :123, :177, :406
 - Description: `Message` embeds `entry.FullName` (attacker-controlled: may contain CR/LF, control characters, or misleading text) and raw `ex.Message` from System.IO.Packaging / the OpenXML SDK (internal part URIs, parser details). Applications commonly log or return `Message`.
 - Attack scenario / PoC: an entry named `word/embeddings/a.exe\r\n[INFO] scan ok` forges log lines; exception text discloses internals to API clients.
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: All Office result messages are now constant text: ZIP entry names are never echoed (oversized part, dangerous extension) and exception messages are no longer interpolated (structural failure, text extraction failure). The only remaining interpolations embed DocuTrust's own constant keyword/threat strings. Exceptions are still available to the caller as `InnerException` of `DocuTrustValidationException` for server-side logging.
+- Regression test: OfficeMessageSafetyTests.ModernScan_DangerousEntryNameWithLineBreaks_IsNotEchoed; OfficeMessageSafetyTests.ModernScan_OversizedEntryName_IsNotEchoed (both fail on the old code); OfficeMessageSafetyTests.ModernScan_StructuralFailure_DoesNotEchoExceptionText (guard: the packaging exception for this input happened not to contain the name, so it also passed before)
+- Status: Fixed
+- Commit: `git log --grep "DT-016"`
 
 ### DT-017 — Office `GetPageAsync` reports `IsClean = true` without scanning; swallows parse errors
 - Severity: Medium

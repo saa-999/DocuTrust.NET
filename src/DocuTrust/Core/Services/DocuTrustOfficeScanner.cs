@@ -206,9 +206,10 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
         {
             throw;
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            return new DocuTrustFileCheckResult { IsClean = false, Message = $"Structural deep scan failed: {ex.Message}", IsScanned = true };
+            // Exception text (part URIs, parser internals) is never copied into the result.
+            return new DocuTrustFileCheckResult { IsClean = false, Message = "Structural deep scan failed: the package is not a valid document of its declared type.", IsScanned = true };
         }
     }
 
@@ -347,9 +348,9 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
         {
             throw;
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            return new DocuTrustFileCheckResult { IsClean = false, Message = $"Text extraction error: {ex.Message}", IsScanned = true };
+            return new DocuTrustFileCheckResult { IsClean = false, Message = "Text extraction failed: the document could not be parsed.", IsScanned = true };
         }
     
     }
