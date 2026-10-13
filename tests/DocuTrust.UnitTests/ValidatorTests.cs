@@ -41,4 +41,48 @@ public class ValidatorTests
         Assert.False(result.IsValid);
         Assert.Equal("pdf", result.ActualExtension);
     }
+
+    private static readonly byte[] Jpeg =
+        [0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0xFF, 0xD9];
+
+    // DT-030: only magic bytes were compared; the client file name could claim any other type.
+    [Theory]
+    [InlineData("invoice.html")]
+    [InlineData("invoice.pdf.exe")]
+    [InlineData("invoice.html.")]
+    [InlineData("invoice.html .")]
+    [InlineData("evil.asp:.pdf")]
+    [InlineData("evil.html\0.pdf")]
+    [InlineData("report\r\n.pdf")]
+    public async Task ValidateFileAsync_ClientNameClaimsAnotherType_IsInvalid(string fileName)
+    {
+        var result = await new DocuTrustFileScanner().ValidateFileAsync(TestFiles.FormFile(Pdf, fileName), ".pdf");
+
+        Assert.False(result.IsValid);
+        Assert.Equal("pdf", result.ActualExtension);
+    }
+
+    [Theory]
+    [InlineData("report.pdf")]
+    [InlineData("REPORT.PDF")]
+    [InlineData("invoice.exe.pdf")]
+    [InlineData("blob")]
+    [InlineData("C:\\Users\\someone\\report.pdf")]
+    public async Task ValidateFileAsync_AcceptableClientName_IsValid(string fileName)
+    {
+        var result = await new DocuTrustFileScanner().ValidateFileAsync(TestFiles.FormFile(Pdf, fileName), ".pdf");
+
+        Assert.True(result.IsValid, result.Message);
+    }
+
+    [Theory]
+    [InlineData("photo.jpg")]
+    [InlineData("photo.jpeg")]
+    [InlineData("photo.JFIF")]
+    public async Task ValidateFileAsync_ExtensionAlias_IsValid(string fileName)
+    {
+        var result = await new DocuTrustFileScanner().ValidateFileAsync(TestFiles.FormFile(Jpeg, fileName), ".jpg");
+
+        Assert.True(result.IsValid, result.Message);
+    }
 }

@@ -62,7 +62,7 @@ Empirical probes run before the fixes (scratch program, not committed):
 | DT-027 | PDF/ZIP polyglots not detected | Low | Fixed |
 | DT-028 | PdfPig 0.1.14 has known infinite-recursion (stack overflow) bugs | High | Fixed |
 | DT-029 | Empty `expectedExtension` makes `ValidateFileAsync` accept any type, including executables | High | Fixed |
-| DT-030 | Client filename extension ignored (double extensions, docs claim otherwise) | Medium | Open |
+| DT-030 | Client filename extension ignored (double extensions, docs claim otherwise) | Medium | Fixed |
 | DT-031 | Validator has no size limit before container (ZIP/OLE) parsing | Medium | Open |
 | DT-032 | Validator leaves the caller's stream at a changed position | Low | Open |
 | DT-033 | Validator exceptions embed the client filename and full path | Low | Open |
@@ -405,10 +405,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: src/DocuTrust/Core/Services/DocuTrustFileScanner.cs:203-292 (`ValidateFileAsync`); docs/getting-started.md ("This checks both the extension AND the magic bytes")
 - Description: Only magic bytes are compared with `expectedExtension`; `IFormFile.FileName` is never checked. Applications that store files under the client-supplied name end up with `report.pdf.html` / `x.pdf.exe` / `x.html` files whose bytes are a valid PDF, which leads to stored XSS or execution depending on the serving stack.
 - Attack scenario / PoC: upload `<valid PDF bytes>` named `invoice.html` with `expectedExtension = ".pdf"` → `IsValid = true`.
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: After the magic bytes match, `ValidateFileAsync` checks `IFormFile.FileName`: only the last path segment is used (old browsers send full client paths); control characters (incl. NUL) and `:` (NTFS alternate data streams such as `evil.asp:.pdf`) are rejected; trailing dots/spaces are trimmed as Windows does; if an extension remains it must equal the expected one, case-insensitively, with alias groups (jpg/jpeg/jpe/jfif, tif/tiff, htm/html, mpg/mpeg). Names without an extension (e.g. `blob` from browser `FormData`) are accepted. Failure messages are constant (the name is not echoed). The path and stream APIs are unchanged (no client name).
+- Regression test: ValidatorTests.ValidateFileAsync_ClientNameClaimsAnotherType_IsInvalid (7 names: .html, .pdf.exe, trailing dot, trailing space+dot, ADS colon, NUL, CR/LF); ValidatorTests.ValidateFileAsync_AcceptableClientName_IsValid (5 names incl. upper case, double extension ending in .pdf, no extension, Windows full path); ValidatorTests.ValidateFileAsync_ExtensionAlias_IsValid
+- Status: Fixed
+- Commit: `git log --grep "DT-030"`
 
 ### DT-031 — Validator has no size limit before container (ZIP/OLE) parsing
 - Severity: Medium

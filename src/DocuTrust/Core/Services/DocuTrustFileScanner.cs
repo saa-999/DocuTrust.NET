@@ -236,23 +236,30 @@ public class DocuTrustFileScanner : IDocuTrustFileValidator
 
             if (format != null)
             {
-             
                 string normalizedExpected = expectedExtension.StartsWith(".") ? expectedExtension[1..] : expectedExtension;
                 if (normalizedExpected.Equals(format.Extension, StringComparison.OrdinalIgnoreCase))
                 {
-                    return Task.FromResult(
-
-
-                        new DocuTrustValidationResult
+                    // The bytes match; the client-supplied name must not claim a different (e.g. executable or
+                    // script) type, because applications often store or serve files under that name.
+                    var nameProblem = CheckClientFileName(file.FileName, normalizedExpected);
+                    if (nameProblem != null)
+                    {
+                        return Task.FromResult(new DocuTrustValidationResult
                         {
-                            IsValid = true,
+                            IsValid = false,
                             ActualMimeType = format.MediaType,
                             ActualExtension = format.Extension,
-                            Message = $"[DocuTrust] Validation successful: {format.MediaType} ({format.Extension})."
-                        }
+                            Message = nameProblem
+                        });
+                    }
 
-
-                        );
+                    return Task.FromResult(new DocuTrustValidationResult
+                    {
+                        IsValid = true,
+                        ActualMimeType = format.MediaType,
+                        ActualExtension = format.Extension,
+                        Message = $"[DocuTrust] Validation successful: {format.MediaType} ({format.Extension})."
+                    });
                 }
             }
 
@@ -278,5 +285,49 @@ public class DocuTrustFileScanner : IDocuTrustFileValidator
 
                 );
         }
+    }
+
+    private static readonly string[][] ExtensionAliases =
+    [
+        ["jpg", "jpeg", "jpe", "jfif"],
+        ["tif", "tiff"],
+        ["htm", "html"],
+        ["mpg", "mpeg"],
+    ];
+
+    /// <summary>
+    /// Validates the client-supplied file name against the expected extension. Returns a constant failure message,
+    /// or null when the name is acceptable. A name without an extension (e.g. "blob") is accepted.
+    /// </summary>
+    internal static string? CheckClientFileName(string? fileName, string expectedExtension)
+    {
+        if (string.IsNullOrEmpty(fileName))
+            return null;
+
+        // Old browsers send a full client path; only the last segment is the name.
+        var name = fileName[(fileName.LastIndexOfAny(['/', '\\']) + 1)..];
+
+        // Control characters (including NUL truncation) and ':' (NTFS alternate data streams, "evil.asp:.pdf")
+        // make the stored name differ from the one validated here.
+        if (name.Any(c => char.IsControl(c) || c == ':'))
+            return "[DocuTrust] Validation failed: the file name contains characters that are not allowed.";
+
+        // Windows drops trailing dots and spaces: "evil.html." is saved as "evil.html".
+        name = name.TrimEnd('.', ' ');
+        var extension = Path.GetExtension(name);
+        if (extension.Length <= 1)
+            return null;
+
+        return SameExtension(extension[1..], expectedExtension)
+            ? null
+            : "[DocuTrust] Validation failed: the file name extension does not match the expected type.";
+    }
+
+    private static bool SameExtension(string actual, string expected)
+    {
+        if (actual.Equals(expected, StringComparison.OrdinalIgnoreCase))
+            return true;
+        return ExtensionAliases.Any(group =>
+            group.Contains(actual, StringComparer.OrdinalIgnoreCase) && group.Contains(expected, StringComparer.OrdinalIgnoreCase));
     }
 }
