@@ -144,7 +144,7 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
             using var stream = file.OpenReadStream();
             byte[] header = new byte[5];
             token.ThrowIfCancellationRequested();
-            if (await stream.ReadAsync(header, 0, 5, token) < 5 || Encoding.ASCII.GetString(header) != "%PDF-")
+            if (await stream.ReadAtLeastAsync(header, header.Length, throwOnEndOfStream: false, token) < header.Length || Encoding.ASCII.GetString(header) != "%PDF-")
             {
                 return new DocuTrustFileCheckResult { IsClean = false, Message = "Invalid PDF header signature.", IsScanned = true };
             }

@@ -33,14 +33,14 @@ Empirical probes run before the fixes (scratch program, not committed):
 
 | ID | Title | Severity | Status |
 | --- | --- | --- | --- |
-| DT-001 | Integer overflow in custom pool `Rent` (`1 << 31`) | Low | Open |
-| DT-002 | Custom pool `Return` accepts arrays of any length | Low | Open |
-| DT-003 | Pooled buffers holding file contents are never cleared (static pool) | Low | Open |
-| DT-004 | Custom pool retains up to ~12.8 GB of LOH arrays (memory DoS) | High | Open |
-| DT-005 | Non-atomic bucket count check-then-add in custom pool | Low | Open |
-| DT-006 | `(int)stream.Length` narrowing cast; trusts stream length over size check | Medium | Open |
-| DT-007 | Single non-looped `ReadAsync` leaves the tail of legacy files unscanned | Medium | Open |
-| DT-008 | Whole-file string decoding (≈3× memory); UTF-16 only at even offsets; `Ole10Native` check dead | Medium | Open |
+| DT-001 | Integer overflow in custom pool `Rent` (`1 << 31`) | Low | Fixed |
+| DT-002 | Custom pool `Return` accepts arrays of any length | Low | Fixed |
+| DT-003 | Pooled buffers holding file contents are never cleared (static pool) | Low | Fixed |
+| DT-004 | Custom pool retains up to ~12.8 GB of LOH arrays (memory DoS) | High | Fixed |
+| DT-005 | Non-atomic bucket count check-then-add in custom pool | Low | Fixed |
+| DT-006 | `(int)stream.Length` narrowing cast; trusts stream length over size check | Medium | Fixed |
+| DT-007 | Single non-looped `ReadAsync` leaves the tail of legacy files unscanned | Medium | Fixed |
+| DT-008 | Whole-file string decoding (≈3× memory); UTF-16 only at even offsets; `Ole10Native` check dead | Medium | Fixed |
 | DT-009 | Zip bomb: no total budget, no ratio limit, CD read before count check, extraction unchecked | High | Open |
 | DT-010 | Macro detection relies on the part name `vbaProject.bin` only | High | Open |
 | DT-011 | Embedded payload detection: case-sensitive, incomplete list, no content sniffing, OLE/nested not inspected | High | Open |
@@ -86,10 +86,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: src/DocuTrust/Core/Services/DoucTrustMemoryPool.cs:57 (`Rent`)
 - Description: `GetBucketIndex` returns 30 for any size in (2^30, 2^31−1], and `1 << (bucketIndex + 1)` is `1 << 31` = `int.MinValue`. `new T[int.MinValue]` throws `OverflowException`. Sizes come from `(int)stream.Length` (DT-006), so any stream whose length is between 1 GiB and 2 GiB crashes the scan.
 - Attack scenario / PoC: an `IFormFile` whose `Length` passes the 100 MB check but whose `OpenReadStream().Length` is 1.5 GiB (custom/streaming `IFormFile`) → `Rent(1_610_612_736)` → `OverflowException` → `DocuTrustValidationException` instead of a verdict.
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: Deleted `DoucTrustMemoryPool`/`IMemoryPool`. Buffers come from `ArrayPool<byte>.Shared` via `PooledChunkReader`, which always rents a fixed 64 KB + overlap window, so allocation size no longer depends on any stream length.
+- Regression test: OfficeLegacyScanTests.LegacyScan_StreamLengthOutsideIntRange_ReturnsVerdictWithoutOverflow (1.5 GiB and 3 GiB reported lengths)
+- Status: Fixed
+- Commit: Phase 1 commit (`git log --grep "DT-001"`)
 
 ### DT-002 — Custom pool `Return` accepts arrays of any length
 - Severity: Low
@@ -97,10 +97,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: src/DocuTrust/Core/Services/DoucTrustMemoryPool.cs:61-77 (`Return`)
 - Description: `Return` buckets by `Log2(length − 1)` without checking that the length equals the bucket's rent size (`2^(b+1)`). A 3-byte array lands in the 4-byte bucket and a later `Rent(4)` returns a 3-byte array. Callers then index past the end (`ReadAsync(buffer, 0, length)` throws). Latent today because only pool-created arrays are returned, but one wrong `Return` corrupts the shared static pool for every request.
 - Attack scenario / PoC: not attacker-triggerable in v1.0.2; a maintenance bug would turn into cross-request failures.
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: Custom pool removed; `ArrayPool<byte>.Shared` validates returned arrays itself. `PooledChunkReader` returns exactly the array it rented, once, in `finally`, and never assumes the rented length equals the requested length (all reads and copies use the explicit `capacity`).
+- Regression test: BufferPoolTests.Assembly_HasNoCustomMemoryPool; BufferPoolTests.LegacyScan_RentsBoundedBuffers_ReturnsEachOnceCleared (the recording pool hands out oversized arrays and flags foreign returns)
+- Status: Fixed
+- Commit: Phase 1 commit (`git log --grep "DT-001"`)
 
 ### DT-003 — Pooled buffers holding file contents are never cleared (static pool)
 - Severity: Low
@@ -108,10 +108,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: src/DocuTrust/Core/Services/DoucTrustMemoryPool.cs:61-66; DocuTrustOfficeScanner.cs:26, :323, :440
 - Description: The pool is a `static` field shared by all scanner instances, and both call sites call `Return(buffer)` with the default `arrayClear = false`. Each request's raw upload bytes stay in pooled arrays for the life of the process and are handed to the next request. Verified: the next request only decodes `[0, bytesRead)`, so the old bytes are not returned in a result today. The lead "leaks to the next request" is therefore not directly observable, but the data remains in memory, crash dumps and heap dumps, and one off-by-one turns it into a cross-tenant disclosure.
 - Attack scenario / PoC: process memory dump, or any future code path that uses `buffer.Length` instead of `bytesRead`.
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: Every pooled buffer is returned with `clearArray: true` in a `finally` block (also on exceptions).
+- Regression test: BufferPoolTests.LegacyScan_RentsBoundedBuffers_ReturnsEachOnceCleared; BufferPoolTests.LegacyTextExtraction_RentsBoundedBuffers_ReturnsEachOnceCleared; BufferPoolTests.LegacyScan_WhenStreamThrows_StillReturnsBufferCleared
+- Status: Fixed
+- Commit: Phase 1 commit (`git log --grep "DT-001"`)
 
 ### DT-004 — Custom pool retains up to ~12.8 GB of LOH arrays (memory DoS)
 - Severity: High
@@ -119,10 +119,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: src/DocuTrust/Core/Services/DoucTrustMemoryPool.cs:11, :57, :71-76; DocuTrustOfficeScanner.cs:283, :418
 - Description: The pool rents whole-file arrays rounded up to the next power of two (a 65 MB file gets a 128 MB array) and keeps up to 50 arrays per bucket forever (no trimming, no GC pressure callback). Buckets up to 2^27 can fill: 50 × (2 + 4 + … + 128 MB) ≈ 12.8 GB of permanently rooted Large Object Heap memory.
 - Attack scenario / PoC: 50 concurrent uploads of ~65–100 MB legacy (`D0 CF 11 E0`) files to an endpoint that calls the Office scanner → each rents a 128 MB array → all 50 are returned to the static pool → 6.4 GB retained after the requests finish. Repeat for smaller sizes to fill the other buckets. Even with Kestrel's default 30 MB body limit, ~3.2 GB can be pinned.
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: Whole-file arrays replaced by bounded streaming: one 64 KB (+ keyword overlap, < 80 KB) buffer per scan from `ArrayPool<byte>.Shared`, which is size-bucketed, per-core and trimmed under memory pressure. Nothing is allocated in proportion to the file size.
+- Regression test: BufferPoolTests.LegacyScan_RentsBoundedBuffers_ReturnsEachOnceCleared (5 MB file, asserts max rent <= 80 KB)
+- Status: Fixed
+- Commit: Phase 1 commit (`git log --grep "DT-001"`)
 
 ### DT-005 — Non-atomic bucket count check-then-add in custom pool
 - Severity: Low
@@ -130,10 +130,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: src/DocuTrust/Core/Services/DoucTrustMemoryPool.cs:49-52, :71-76
 - Description: `Volatile.Read(count) < Max` followed by `Add` then `Interlocked.Increment`, and `TryTake` followed by `Interlocked.Decrement`, are separate operations. Under concurrency the counts drift from the real bag sizes, so the 50-array cap in DT-004 is not a real cap.
 - Attack scenario / PoC: concurrent returns overshoot the cap; amplifies DT-004.
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: Custom pool removed; `ArrayPool<byte>.Shared` is thread-safe. No DocuTrust-owned shared mutable state remains.
+- Regression test: BufferPoolTests.Assembly_HasNoCustomMemoryPool
+- Status: Fixed
+- Commit: Phase 1 commit (`git log --grep "DT-001"`)
 
 ### DT-006 — `(int)stream.Length` narrowing cast; trusts stream length over size check
 - Severity: Medium
@@ -141,10 +141,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: src/DocuTrust/Core/Services/DocuTrustOfficeScanner.cs:281 (`ScanLegacyOfficeAsync`), :417 (`ExtractLegacyTextAsync`)
 - Description: The size gate checks `IFormFile.Length`, but the allocation uses `(int)stream.Length`. For lengths ≥ 2^31 the cast wraps to a negative value (`ArgumentOutOfRangeException`), and between 2^30 and 2^31 it hits DT-001. The two lengths can differ for non-`FormFile` implementations, so the 100 MB limit does not bound the allocation.
 - Attack scenario / PoC: `IFormFile` with `Length = 10` and a stream reporting 3 GiB → negative rent size → exception; or 1.5 GiB → `OverflowException`.
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: No cast and no use of `stream.Length`. The legacy scan and legacy text extraction count the bytes actually read and fail closed (`IsClean = false`) once `FileSize.MaxFileSizeBytes` is exceeded, whatever `IFormFile.Length` claims.
+- Regression test: OfficeLegacyScanTests.LegacyScan_StreamLengthOutsideIntRange_ReturnsVerdictWithoutOverflow; OfficeLegacyScanTests.LegacyScan_StreamLongerThanDeclaredLength_FailsClosed; OfficeLegacyScanTests.LegacyTextExtraction_ShortReads_ReadsEntireFile
+- Status: Fixed
+- Commit: Phase 1 commit (`git log --grep "DT-001"`)
 
 ### DT-007 — Single non-looped `ReadAsync` leaves the tail of legacy files unscanned
 - Severity: Medium
@@ -152,10 +152,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: src/DocuTrust/Core/Services/DocuTrustOfficeScanner.cs:290 (`ScanLegacyOfficeAsync`), :424 (`ExtractLegacyTextAsync`), :42 and :77 (header reads); DocuTrustPdfScanner.cs:147 (header read)
 - Description: `Stream.ReadAsync` may return fewer bytes than requested. Only the first read is scanned, so the rest of the file is never searched for macro indicators, and the result is `IsClean = true`.
 - Attack scenario / PoC: any `IFormFile` whose stream returns data in pieces (network/streaming implementations) with the VBA indicators placed after the first returned block → legacy scan reports *"Legacy heuristics passed."*.
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: `PooledChunkReader` loops `ReadAsync` until each window is full or the stream ends. Header reads in both scanners use `ReadAtLeastAsync(header, header.Length, throwOnEndOfStream: false)`.
+- Regression test: OfficeLegacyScanTests.LegacyScan_ShortReads_ScansEntireFile; OfficeLegacyScanTests.LegacyScan_HeaderDeliveredOneByteAtATime_IsRecognised; OfficeLegacyScanTests.LegacyTextExtraction_ShortReads_ReadsEntireFile; DocuTrustPdfScannerTests.ScanFileContentAsync_HeaderDeliveredInSmallReads_IsRecognised
+- Status: Fixed
+- Commit: Phase 1 commit (`git log --grep "DT-001"`)
 
 ### DT-008 — Whole-file string decoding (≈3× memory); UTF-16 only at even offsets; `Ole10Native` check dead
 - Severity: Medium
@@ -163,10 +163,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: src/DocuTrust/Core/Services/DocuTrustOfficeScanner.cs:293-319 (`ScanLegacyOfficeAsync`)
 - Description: (1) The whole file is decoded into an ASCII string and a UTF-16 string: about 3× the file size in LOH allocations per request (a 100 MB file costs ~300 MB). (2) `Encoding.Unicode.GetString` decodes from offset 0 only, so a UTF-16LE keyword starting at an odd byte offset is invisible. (3) `"\x01Ole10Native"` is searched only in the ASCII view, but OLE stream names are stored UTF-16LE in the CFB directory, so the embedded-OLE check never matches.
 - Attack scenario / PoC: a CFB file whose UTF-16LE `AutoOpen` starts at an odd offset → clean. A legacy document with an OLE Package (`\x01Ole10Native`) → clean.
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: New `KeywordSet` matches keywords case-insensitively directly in the raw bytes, both as ASCII and as UTF-16LE at every byte offset (both alignments), with a vectorised first-byte search. No strings are materialised. `\u0001Ole10Native` is part of the set, so its UTF-16 directory name is now found. Windows carry `longest pattern - 1` bytes of overlap so boundary-spanning keywords are found.
+- Regression test: OfficeLegacyScanTests.LegacyScan_Utf16KeywordAtOddOffset_IsDetected; OfficeLegacyScanTests.LegacyScan_Ole10NativeDirectoryName_IsDetected; OfficeLegacyScanTests.LegacyScan_KeywordAcrossChunkBoundary_IsDetected (4 cases); OfficeLegacyScanTests.LegacyScan_CleanFile_IsClean
+- Status: Fixed
+- Commit: Phase 1 commit (`git log --grep "DT-001"`)
 
 ### DT-009 — Zip bomb: no total budget, no ratio limit, CD read before count check, extraction unchecked
 - Severity: High

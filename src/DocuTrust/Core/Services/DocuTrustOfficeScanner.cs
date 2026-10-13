@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.IO.Compression;
 using System.Text;
 using System.Xml;
@@ -10,6 +11,7 @@ using DocumentFormat.OpenXml.Presentation;
 using DocuTrust.Core.Abstractions;
 using DocuTrust.Core.Models;
 using DocuTrust.Core.Constants;
+using DocuTrust.Core.Scanning;
 using DocuTrust.Exceptions;
 
 
@@ -23,7 +25,26 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
         ".exe", ".vbs", ".ps1", ".bat", ".com", ".scr", ".js", ".jse", ".wsf", ".wsh", ".vbe", ".jar"
     };
 
-    private static readonly IMemoryPool<byte> _memoryPool = new DoucTrustMemoryPool<byte>();
+    private const string OleNativeStreamName = "\u0001Ole10Native";
+
+    private static readonly KeywordSet LegacyIndicators = new(
+    [
+        "VBAProject", "_VBA_PROJECT_CUR", "PROJECTwm",
+        "AutoOpen", "AutoExec", "Document_Open", "Workbook_Open",
+        "Execute", "Shell", "CreateObject", "WScript.Shell", "powershell.exe",
+        OleNativeStreamName
+    ]);
+
+    private readonly ArrayPool<byte> _bufferPool;
+
+    public DocuTrustOfficeScanner() : this(ArrayPool<byte>.Shared)
+    {
+    }
+
+    internal DocuTrustOfficeScanner(ArrayPool<byte> bufferPool)
+    {
+        _bufferPool = bufferPool;
+    }
 
 
     public async Task<DocuTrustFileCheckResult> GetPageAsync(int pageNumber, int allPages, IFormFile file, CancellationToken token = default)
@@ -39,7 +60,7 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
             using var stream = file.OpenReadStream();
             byte[] header = new byte[4];
             token.ThrowIfCancellationRequested();
-            _ = await stream.ReadAsync(header, 0, 4, token);
+            _ = await stream.ReadAtLeastAsync(header, header.Length, throwOnEndOfStream: false, token);
             stream.Position = 0;
 
             if (header[0] == 0x50 && header[1] == 0x4B && header[2] == 0x03 && header[3] == 0x04)
@@ -74,7 +95,7 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
             using var stream = file.OpenReadStream();
             byte[] header = new byte[8];
             token.ThrowIfCancellationRequested();
-            _ = await stream.ReadAsync(header, 0, 8, token);
+            _ = await stream.ReadAtLeastAsync(header, header.Length, throwOnEndOfStream: false, token);
             stream.Position = 0;
 
             if (header.SequenceEqual(new byte[] { 0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1 }))
@@ -271,57 +292,27 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
 
     private async Task<DocuTrustFileCheckResult> ScanLegacyOfficeAsync(Stream stream, CancellationToken token)
     {
-        IMemoryPool<byte> memoryPool = new DoucTrustMemoryPool<byte>();
-      
-         
-        
         token.ThrowIfCancellationRequested();
 
+        // Stream the file through one pooled 64 KB window instead of loading and decoding it whole.
+        // The window keeps (longest pattern - 1) bytes of overlap and matches ASCII plus UTF-16LE at any offset.
+        string? indicator = null;
+        var read = await PooledChunkReader.ReadAsync(
+            stream,
+            _bufferPool,
+            LegacyIndicators.MaxPatternLength - 1,
+            FileSize.MaxFileSizeBytes,
+            (window, _) => (indicator = LegacyIndicators.FindFirst(window)) != null,
+            token).ConfigureAwait(false);
 
-        int length_stream = (int)stream.Length;
+        if (read.LimitExceeded)
+            return new DocuTrustFileCheckResult { IsClean = false, Message = "File exceeds security scan size limit.", IsScanned = true };
 
-        byte[] date = _memoryPool.Rent(length_stream);
-       
-
-        try
-        { 
-             token.ThrowIfCancellationRequested();
-
-             int bytesRead = await stream.ReadAsync(date, 0, length_stream, token);
-             
-             
-            string ascii = Encoding.ASCII.GetString(date, 0, bytesRead);
-            string utf16 = Encoding.Unicode.GetString(date, 0, bytesRead);
-
-
-            
-        
-
-
-
-        string[] suspiciousKeywords = {
-            "VBAProject", "_VBA_PROJECT_CUR", "PROJECTwm",
-            "AutoOpen", "AutoExec", "Document_Open", "Workbook_Open",
-            "Execute", "Shell", "CreateObject", "WScript.Shell", "powershell.exe"
-        };
-
-        foreach (var keyword in suspiciousKeywords)
-        {
-            token.ThrowIfCancellationRequested();
-            if (ascii.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0 ||
-                utf16.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                return new DocuTrustFileCheckResult { IsClean = false, Message = $"Legacy malicious indicator detected: '{keyword}'.", IsScanned = true };
-            }
-        }
-
-        if (ascii.Contains("\x01Ole10Native"))
+        if (indicator == OleNativeStreamName)
             return new DocuTrustFileCheckResult { IsClean = false, Message = "Legacy file contains embedded OLE objects.", IsScanned = true };
-        }
-        finally
-        {
-            _memoryPool.Return(date);
-        }
+
+        if (indicator != null)
+            return new DocuTrustFileCheckResult { IsClean = false, Message = $"Legacy malicious indicator detected: '{indicator}'.", IsScanned = true };
 
         return new DocuTrustFileCheckResult { IsClean = true, Message = "Legacy heuristics passed.", IsScanned = true };
     }
@@ -410,37 +401,31 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
 
     private async Task<DocuTrustFileCheckResult> ExtractLegacyTextAsync(Stream stream, CancellationToken token)
     {
-        
         token.ThrowIfCancellationRequested();
 
+        var sb = new StringBuilder();
+        var read = await PooledChunkReader.ReadAsync(
+            stream,
+            _bufferPool,
+            overlap: 0,
+            FileSize.MaxFileSizeBytes,
+            (window, _) =>
+            {
+                foreach (byte b in window)
+                {
+                    // Same mapping as Encoding.ASCII: bytes above 0x7F become '?'.
+                    char c = b < 0x80 ? (char)b : '?';
+                    if (char.IsLetterOrDigit(c) || char.IsPunctuation(c) || char.IsWhiteSpace(c))
+                        sb.Append(c);
+                }
+                return false;
+            },
+            token).ConfigureAwait(false);
 
-         int length_stream = (int)stream.Length;
-         byte[] buffer = _memoryPool.Rent(length_stream);
-         var sb = new StringBuilder();
-        try
-        {
-           token.ThrowIfCancellationRequested();
+        if (read.LimitExceeded)
+            return new DocuTrustFileCheckResult { IsClean = false, Message = "File exceeds security size limits.", IsScanned = true };
 
-           int bytesRead = await stream.ReadAsync(buffer, 0, length_stream, token);
-           
-           
-           string raw = Encoding.ASCII.GetString(buffer, 0, bytesRead);
-
-            
-        
-    
-        foreach (char c in raw)
-        {
-            token.ThrowIfCancellationRequested();
-            if (char.IsLetterOrDigit(c) || char.IsPunctuation(c) || char.IsWhiteSpace(c))
-                sb.Append(c);
-        }
-        } finally
-        {
-            _memoryPool.Return(buffer);
-            
-        }
-     return new DocuTrustFileCheckResult { IsClean = true, Page = sb.ToString(), Message = "Strings extracted from legacy/binary format.", IsScanned = true };
+        return new DocuTrustFileCheckResult { IsClean = true, Page = sb.ToString(), Message = "Strings extracted from legacy/binary format.", IsScanned = true };
     }
     
 

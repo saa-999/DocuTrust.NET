@@ -48,6 +48,20 @@ public class DocuTrustPdfScannerTests
         Assert.Equal("The PDF file passed behavioral analysis.", result.Message);
     }
 
+    // DT-007: the "%PDF-" header was read with one ReadAsync; a short read rejected valid files.
+    [Fact]
+    public async Task ScanFileContentAsync_HeaderDeliveredInSmallReads_IsRecognised()
+    {
+        var scanner = new DocuTrustPdfScanner();
+        byte[] pdfBytes = CreateCleanPdf();
+        var file = new DocuTrust.Tests.TestSupport.StreamFormFile(
+            () => new DocuTrust.Tests.TestSupport.TrickleStream(pdfBytes, maxChunk: 2), pdfBytes.Length, "clean.pdf");
+
+        var result = await scanner.ScanFileContentAsync(file);
+
+        Assert.True(result.IsClean, result.Message);
+    }
+
     private byte[] CreateCleanPdf()
     {
         var builder = new PdfDocumentBuilder();
