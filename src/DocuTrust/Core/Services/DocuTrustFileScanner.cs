@@ -8,14 +8,25 @@ using DocuTrust.Exceptions;
 namespace DocuTrust.Core.Services;
 
 /// <summary>
-/// The heavy lifter for file validation. Checks extensions, signatures, and handles uploads.
+/// The default <see cref="IDocuTrustFileValidator"/>. It detects file types from their signatures with the
+/// FileSignatures library and compares them to the expected extension.
 /// </summary>
+/// <remarks>
+/// The class holds no per-request state. Resolve it through <see cref="DocuTrust.Extensions.DocuTrustExtensions.AddDocuTrust"/>
+/// or create it directly.
+/// </remarks>
+/// <example>
+/// <code>
+/// IDocuTrustFileValidator validator = new DocuTrustFileScanner();
+/// var result = await validator.ValidateFileStreamAsync(stream, ".png");
+/// </code>
+/// </example>
 public class DocuTrustFileScanner : IDocuTrustFileValidator
 {
     private readonly FileFormatInspector _inspector;
 
     /// <summary>
-    /// Sets up the scanner with a fresh file format inspector.
+    /// Creates a validator that recognises the formats built into FileSignatures.
     /// </summary>
     public DocuTrustFileScanner()
     {

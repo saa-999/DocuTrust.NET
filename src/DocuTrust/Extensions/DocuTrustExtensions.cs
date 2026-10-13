@@ -5,21 +5,28 @@ using DocuTrust.Core.Services;
 namespace DocuTrust.Extensions;
 
 /// <summary>
-/// Setup helpers to get DocuTrust services into your DI container.
+/// Registers DocuTrust services with an <see cref="IServiceCollection"/>.
 /// </summary>
 public static class DocuTrustExtensions
 {
     /// <summary>
-    /// Hooks up the file validator and scanners to the service collection.
+    /// Registers <see cref="IDocuTrustFileValidator"/> (implemented by <see cref="DocuTrustFileScanner"/>) and the
+    /// internal PDF and Office scanners, all with a scoped lifetime.
     /// </summary>
-    /// <param name="services">DI service collection.</param>
-    /// <returns>Chained service collection.</returns>
+    /// <param name="services">The service collection to add to.</param>
+    /// <returns>The same <paramref name="services"/> instance, for chaining.</returns>
+    /// <example>
+    /// <code>
+    /// var builder = WebApplication.CreateBuilder(args);
+    /// builder.Services.AddDocuTrust();
+    /// </code>
+    /// </example>
     public static IServiceCollection AddDocuTrust(this IServiceCollection services)
     {
         services.AddScoped<IDocuTrustFileValidator, DocuTrustFileScanner>();
         services.AddScoped<DocuTrustPdfScanner>();
         services.AddScoped<DocuTrustOfficeScanner>();
-        
+
         return services;
     }
 }
