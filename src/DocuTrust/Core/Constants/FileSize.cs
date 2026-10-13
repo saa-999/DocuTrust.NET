@@ -8,5 +8,14 @@ internal static class FileSize
     public const int MaxPackageEntries = 5000;
     public const long MaxEmbeddedStreamSize = 25 * 1024 * 1024;
     public const int MaxNestingDepth = 15;
+
+    /// <summary>Total bytes that may be decompressed from one package, nested packages included.</summary>
+    public const long MaxTotalUncompressedBytes = 256L * 1024 * 1024;
+
+    /// <summary>Largest allowed uncompressed/compressed ratio for a package part.</summary>
+    public const int MaxCompressionRatio = 100;
+
+    /// <summary>Parts smaller than this are not subject to the ratio check (tiny XML compresses extremely well).</summary>
+    public const long CompressionRatioThresholdBytes = 1L * 1024 * 1024;
     
 }

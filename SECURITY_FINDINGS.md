@@ -41,7 +41,7 @@ Empirical probes run before the fixes (scratch program, not committed):
 | DT-006 | `(int)stream.Length` narrowing cast; trusts stream length over size check | Medium | Fixed |
 | DT-007 | Single non-looped `ReadAsync` leaves the tail of legacy files unscanned | Medium | Fixed |
 | DT-008 | Whole-file string decoding (≈3× memory); UTF-16 only at even offsets; `Ole10Native` check dead | Medium | Fixed |
-| DT-009 | Zip bomb: no total budget, no ratio limit, CD read before count check, extraction unchecked | High | Open |
+| DT-009 | Zip bomb: no total budget, no ratio limit, CD read before count check, extraction unchecked | High | Fixed |
 | DT-010 | Macro detection relies on the part name `vbaProject.bin` only | High | Open |
 | DT-011 | Embedded payload detection: case-sensitive, incomplete list, no content sniffing, OLE/nested not inspected | High | Open |
 | DT-012 | DDE detection gaps and fail-open `catch {}` | High | Open |
@@ -174,10 +174,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: src/DocuTrust/Core/Services/DocuTrustOfficeScanner.cs:105-126 (`ScanModernOffice`), :329-409 (`ExtractModernText`)
 - Description: The lead says the per-entry check relies on the attacker-declared `entry.Length`. Verified: on .NET 8 `ZipArchive` stops inflating at the declared size, so the declared value is an upper bound and the per-entry 20 MB check is effective. The following gaps remain: (1) no total uncompressed budget: 5,000 entries × 20 MB = 100 GB of inflation/XML parsing is allowed, and the DDE/relationship passes parse every `.rels`, header and footer; (2) no compression-ratio limit (a 20 MB run of zeros compresses to ~20 KB); (3) `zip.Entries.Count` materialises the whole central directory before the 5,000-entry check (millions of `ZipArchiveEntry` objects from a 100 MB file); (4) `GetPageAsync` → `ExtractModernText` performs **no** entry checks and loads `Body.InnerText` through the DOM, so a 2 GB `document.xml` compressed to ~2 MB exhausts memory; (5) nested packages in `embeddings/` are not inspected.
 - Attack scenario / PoC: a `.docx` whose `word/document.xml` inflates to hundreds of MB, sent to text extraction → OOM. Or many 19 MB zero-filled parts → minutes of CPU per request.
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: New first pass `OfficePackageInspector` streams **every** entry through `BoundedReadStream`, which counts the bytes actually inflated and throws as soon as (a) a part exceeds `MaxPartSizeBytes`, (b) the package exceeds the new shared budget `FileSize.MaxTotalUncompressedBytes` (256 MB), or (c) a part larger than 1 MB exceeds a 100:1 compression ratio. `ZipPreflight` counts central-directory records with fixed-size reads (ZIP64 aware, same walk rule as `ZipArchive`) and rejects more than 5,000 before `ZipArchive` allocates entries. Corrupt deflate data fails closed. Text extraction runs the same pass before the SDK touches a part. Point (5), nested packages, is handled in DT-011.
+- Regression test: OfficeZipBombTests.ModernScan_HighlyCompressedPart_FailsClosed; OfficeZipBombTests.ModernScan_TotalDecompressedBudgetExceeded_FailsClosed; OfficeZipBombTests.ModernScan_TooManyEntries_FailsClosed; OfficeZipBombTests.ModernScan_CentralDirectoryLargerThanDeclared_FailsClosedWithoutThrowing; OfficeZipBombTests.TextExtraction_OversizedPart_FailsClosedBeforeDomLoad; OfficeZipBombTests.TextExtraction_HighlyCompressedPart_FailsClosed; OfficeZipBombTests.ModernScan_LargeOrdinaryDocument_IsClean (no false positive)
+- Status: Fixed
+- Commit: `git log --grep "DT-009"`
 
 ### DT-010 — Macro detection relies on the part name `vbaProject.bin` only
 - Severity: High

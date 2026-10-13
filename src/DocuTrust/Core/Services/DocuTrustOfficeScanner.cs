@@ -20,11 +20,6 @@ namespace DocuTrust.Core.Services;
 internal class DocuTrustOfficeScanner : IDocuTrustContentFile
 {
 
-    private static readonly HashSet<string> MaliciousExts = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ".exe", ".vbs", ".ps1", ".bat", ".com", ".scr", ".js", ".jse", ".wsf", ".wsh", ".vbe", ".jar"
-    };
-
     private const string OleNativeStreamName = "\u0001Ole10Native";
 
     private static readonly KeywordSet LegacyIndicators = new(
@@ -36,14 +31,20 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
     ]);
 
     private readonly ArrayPool<byte> _bufferPool;
+    private readonly OfficeScanLimits _limits;
 
-    public DocuTrustOfficeScanner() : this(ArrayPool<byte>.Shared)
+    public DocuTrustOfficeScanner() : this(ArrayPool<byte>.Shared, OfficeScanLimits.Default)
     {
     }
 
-    internal DocuTrustOfficeScanner(ArrayPool<byte> bufferPool)
+    internal DocuTrustOfficeScanner(ArrayPool<byte> bufferPool) : this(bufferPool, OfficeScanLimits.Default)
+    {
+    }
+
+    internal DocuTrustOfficeScanner(ArrayPool<byte> bufferPool, OfficeScanLimits limits)
     {
         _bufferPool = bufferPool;
+        _limits = limits;
     }
 
 
@@ -62,6 +63,11 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
 
             if (header.Length == 4 && header[0] == 0x50 && header[1] == 0x4B && header[2] == 0x03 && header[3] == 0x04)
             {
+                // Enforce real decompressed sizes before the SDK loads any part into a DOM.
+                var limits = await InspectPackageAsync(file, token);
+                if (limits != null)
+                    return limits;
+
                 return ExtractModernText(file, token);
             }
 
@@ -98,7 +104,7 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
 
             if (header.Length >= 4 && header[0] == 0x50 && header[1] == 0x4B && (header[2] == 0x03 || header[2] == 0x01))
             {
-                return ScanModernOffice(file, token);
+                return await ScanModernOfficeAsync(file, token);
             }
 
             return new DocuTrustFileCheckResult { IsClean = false, Message = "Unsupported or malformed Office format.", IsScanned = true };
@@ -121,36 +127,25 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
         return read == count ? header : header[..read];
     }
 
-    private DocuTrustFileCheckResult ScanModernOffice(IFormFile file, CancellationToken token)
+    private async Task<DocuTrustFileCheckResult?> InspectPackageAsync(IFormFile file, CancellationToken token)
+    {
+        using var stream = file.OpenReadStream();
+
+        // ZipArchive needs random access to the central directory; fail closed instead of throwing.
+        if (!stream.CanSeek)
+            return new DocuTrustFileCheckResult { IsClean = false, Message = "Office package scanning requires a seekable stream.", IsScanned = false };
+
+        var threat = await new OfficePackageInspector(_bufferPool, _limits).InspectAsync(stream, token);
+        return threat == null ? null : new DocuTrustFileCheckResult { IsClean = false, Message = threat, IsScanned = true };
+    }
+
+    private async Task<DocuTrustFileCheckResult> ScanModernOfficeAsync(IFormFile file, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
-        using (var stream = file.OpenReadStream())
-        {
-            // ZipArchive needs random access to the central directory; fail closed instead of throwing.
-            if (!stream.CanSeek)
-                return new DocuTrustFileCheckResult { IsClean = false, Message = "Office package scanning requires a seekable stream.", IsScanned = false };
 
-            using var zip = new ZipArchive(stream, ZipArchiveMode.Read, true);
-            if (zip.Entries.Count > FileSize.MaxPackageEntries)
-                return new DocuTrustFileCheckResult { IsClean = false, Message = "Package contains excessive number of parts.", IsScanned = true };
-
-            foreach (var entry in zip.Entries)
-            {
-                token.ThrowIfCancellationRequested();
-                if (entry.Length > FileSize.MaxPartSizeBytes)
-                    return new DocuTrustFileCheckResult { IsClean = false, Message = $"Part '{entry.FullName}' exceeds safety size limit.", IsScanned = true };
-
-                if (entry.FullName.EndsWith("vbaProject.bin", StringComparison.OrdinalIgnoreCase))
-                    return new DocuTrustFileCheckResult { IsClean = false, Message = "VBA Macros detected in package.", IsScanned = true };
-
-                if (entry.FullName.Contains("embeddings/"))
-                {
-                    string ext = Path.GetExtension(entry.FullName).ToLowerInvariant();
-                    if (MaliciousExts.Contains(ext))
-                        return new DocuTrustFileCheckResult { IsClean = false, Message = $"Suspicious embedded executable found: {entry.FullName}", IsScanned = true };
-                }
-            }
-        }
+        var packageResult = await InspectPackageAsync(file, token);
+        if (packageResult != null)
+            return packageResult;
 
         var settings = new OpenSettings
         {
