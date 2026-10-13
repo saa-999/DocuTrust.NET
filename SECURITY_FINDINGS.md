@@ -70,7 +70,7 @@ Empirical probes run before the fixes (scratch program, not committed):
 | DT-035 | Vulnerable `OpenMcdf 3.1.0` (uncatchable infinite loops) reachable from uploads | High | Fixed |
 | DT-036 | Vulnerable test-only transitive packages (`System.Net.Http`, `System.Text.RegularExpressions`) | Low | Fixed |
 | DT-037 | `FileSize` constants use `int` arithmetic | Info | Fixed |
-| DT-038 | CI never runs tests (and cannot read `.slnx` with SDK 8) | Low | Open |
+| DT-038 | CI never runs tests (and cannot read `.slnx` with SDK 8) | Low | Fixed |
 | DT-039 | No scan time limits | Medium | Fixed |
 | DT-040 | Content scanners are internal; public API only checks magic bytes | Info | Open |
 | DT-041 | XML parsing: DTD/XXE settings | Info | Not an issue |
@@ -493,10 +493,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: .github/workflows/build.yml:1-12
 - Description: The workflow only restores and builds. `dotnet restore` at the root picks up `DocuTrust.slnx`, which the pinned SDK 8.0.x cannot read, so the build itself likely fails. No `dotnet test`, no vulnerable-package gate, no `permissions:` block (default token scope), and `actions/checkout@v3`/`setup-dotnet@v3` are deprecated (Node 16).
 - Attack scenario / PoC: security regressions merge unnoticed.
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: Workflow updated locally (not pushed): `permissions: contents: read`; `actions/checkout@v4` and `actions/setup-dotnet@v4`; restore/build/test target the test project explicitly (SDK 8 cannot read `.slnx`); `dotnet test` runs in Release (with `TreatWarningsAsErrors`); a final step fails the job when `dotnet list package --vulnerable --include-transitive` reports anything for the library or the tests (this also guards DT-035/DT-036 regressions). Pinning actions to commit SHAs is left as a recommendation.
+- Regression test: n/a (CI configuration). Verified locally: YAML parses; restore, Release build (0 warnings), 223/223 tests and the vulnerable-package check all pass with the workflow's exact commands.
+- Status: Fixed
+- Commit: `git log --grep "DT-038"`
 
 ### DT-039 — No scan time limits
 - Severity: Medium

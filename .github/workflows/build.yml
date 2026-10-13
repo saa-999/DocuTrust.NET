@@ -1,12 +1,35 @@
 name: Build
 on: [push, pull_request]
+
+# Least privilege for the GITHUB_TOKEN: this workflow only reads the repository.
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-dotnet@v3
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
-      - run: dotnet restore
-      - run: dotnet build --no-restore
+
+      # The .NET 8 SDK cannot read DocuTrust.slnx (needs SDK 9.0.200+); the test project references the library.
+      - name: Restore
+        run: dotnet restore tests/DocuTrust.UnitTests/DocuTrust.UnitTests.csproj
+
+      - name: Build
+        run: dotnet build tests/DocuTrust.UnitTests/DocuTrust.UnitTests.csproj --no-restore --configuration Release
+
+      - name: Test
+        run: dotnet test tests/DocuTrust.UnitTests/DocuTrust.UnitTests.csproj --no-build --configuration Release --verbosity normal
+
+      - name: Fail on vulnerable packages
+        run: |
+          for project in src/DocuTrust/DocuTrust.csproj tests/DocuTrust.UnitTests/DocuTrust.UnitTests.csproj; do
+            dotnet list "$project" package --vulnerable --include-transitive | tee vulnerable.txt
+            if grep -q "has the following vulnerable packages" vulnerable.txt; then
+              echo "::error::Vulnerable packages in $project"
+              exit 1
+            fi
+          done
