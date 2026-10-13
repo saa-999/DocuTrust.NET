@@ -113,7 +113,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: Deleted `DoucTrustMemoryPool`/`IMemoryPool`. Buffers come from `ArrayPool<byte>.Shared` via `PooledChunkReader`, which always rents a fixed 64 KB + overlap window, so allocation size no longer depends on any stream length.
 - Regression test: OfficeLegacyScanTests.LegacyScan_StreamLengthOutsideIntRange_ReturnsVerdictWithoutOverflow (1.5 GiB and 3 GiB reported lengths)
 - Status: Fixed
-- Commit: Phase 1 commit (`git log --grep "DT-001"`)
+- Commit: `26e10fa` (Phase 1 commit, shared with DT-001..DT-008)
 
 ### DT-002 — Custom pool `Return` accepts arrays of any length
 - Severity: Low
@@ -124,7 +124,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: Custom pool removed; `ArrayPool<byte>.Shared` validates returned arrays itself. `PooledChunkReader` returns exactly the array it rented, once, in `finally`, and never assumes the rented length equals the requested length (all reads and copies use the explicit `capacity`).
 - Regression test: BufferPoolTests.Assembly_HasNoCustomMemoryPool; BufferPoolTests.LegacyScan_RentsBoundedBuffers_ReturnsEachOnceCleared (the recording pool hands out oversized arrays and flags foreign returns)
 - Status: Fixed
-- Commit: Phase 1 commit (`git log --grep "DT-001"`)
+- Commit: `26e10fa` (Phase 1 commit, shared with DT-001..DT-008)
 
 ### DT-003 — Pooled buffers holding file contents are never cleared (static pool)
 - Severity: Low
@@ -135,7 +135,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: Every pooled buffer is returned with `clearArray: true` in a `finally` block (also on exceptions).
 - Regression test: BufferPoolTests.LegacyScan_RentsBoundedBuffers_ReturnsEachOnceCleared; BufferPoolTests.LegacyTextExtraction_RentsBoundedBuffers_ReturnsEachOnceCleared; BufferPoolTests.LegacyScan_WhenStreamThrows_StillReturnsBufferCleared
 - Status: Fixed
-- Commit: Phase 1 commit (`git log --grep "DT-001"`)
+- Commit: `26e10fa` (Phase 1 commit, shared with DT-001..DT-008)
 
 ### DT-004 — Custom pool retains up to ~12.8 GB of LOH arrays (memory DoS)
 - Severity: High
@@ -146,7 +146,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: Whole-file arrays replaced by bounded streaming: one 64 KB (+ keyword overlap, < 80 KB) buffer per scan from `ArrayPool<byte>.Shared`, which is size-bucketed, per-core and trimmed under memory pressure. Nothing is allocated in proportion to the file size.
 - Regression test: BufferPoolTests.LegacyScan_RentsBoundedBuffers_ReturnsEachOnceCleared (5 MB file, asserts max rent <= 80 KB)
 - Status: Fixed
-- Commit: Phase 1 commit (`git log --grep "DT-001"`)
+- Commit: `26e10fa` (Phase 1 commit, shared with DT-001..DT-008)
 
 ### DT-005 — Non-atomic bucket count check-then-add in custom pool
 - Severity: Low
@@ -157,7 +157,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: Custom pool removed; `ArrayPool<byte>.Shared` is thread-safe. No DocuTrust-owned shared mutable state remains.
 - Regression test: BufferPoolTests.Assembly_HasNoCustomMemoryPool
 - Status: Fixed
-- Commit: Phase 1 commit (`git log --grep "DT-001"`)
+- Commit: `26e10fa` (Phase 1 commit, shared with DT-001..DT-008)
 
 ### DT-006 — `(int)stream.Length` narrowing cast; trusts stream length over size check
 - Severity: Medium
@@ -168,7 +168,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: No cast and no use of `stream.Length`. The legacy scan and legacy text extraction count the bytes actually read and fail closed (`IsClean = false`) once `FileSize.MaxFileSizeBytes` is exceeded, whatever `IFormFile.Length` claims.
 - Regression test: OfficeLegacyScanTests.LegacyScan_StreamLengthOutsideIntRange_ReturnsVerdictWithoutOverflow; OfficeLegacyScanTests.LegacyScan_StreamLongerThanDeclaredLength_FailsClosed; OfficeLegacyScanTests.LegacyTextExtraction_ShortReads_ReadsEntireFile
 - Status: Fixed
-- Commit: Phase 1 commit (`git log --grep "DT-001"`)
+- Commit: `26e10fa` (Phase 1 commit, shared with DT-001..DT-008)
 
 ### DT-007 — Single non-looped `ReadAsync` leaves the tail of legacy files unscanned
 - Severity: Medium
@@ -179,7 +179,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: `PooledChunkReader` loops `ReadAsync` until each window is full or the stream ends. Header reads in both scanners use `ReadAtLeastAsync(header, header.Length, throwOnEndOfStream: false)`.
 - Regression test: OfficeLegacyScanTests.LegacyScan_ShortReads_ScansEntireFile; OfficeLegacyScanTests.LegacyScan_HeaderDeliveredOneByteAtATime_IsRecognised; OfficeLegacyScanTests.LegacyTextExtraction_ShortReads_ReadsEntireFile; DocuTrustPdfScannerTests.ScanFileContentAsync_HeaderDeliveredInSmallReads_IsRecognised
 - Status: Fixed
-- Commit: Phase 1 commit (`git log --grep "DT-001"`)
+- Commit: `26e10fa` (Phase 1 commit, shared with DT-001..DT-008)
 
 ### DT-008 — Whole-file string decoding (≈3× memory); UTF-16 only at even offsets; `Ole10Native` check dead
 - Severity: Medium
@@ -190,7 +190,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: New `KeywordSet` matches keywords case-insensitively directly in the raw bytes, both as ASCII and as UTF-16LE at every byte offset (both alignments), with a vectorised first-byte search. No strings are materialised. `\u0001Ole10Native` is part of the set, so its UTF-16 directory name is now found. Windows carry `longest pattern - 1` bytes of overlap so boundary-spanning keywords are found.
 - Regression test: OfficeLegacyScanTests.LegacyScan_Utf16KeywordAtOddOffset_IsDetected; OfficeLegacyScanTests.LegacyScan_Ole10NativeDirectoryName_IsDetected; OfficeLegacyScanTests.LegacyScan_KeywordAcrossChunkBoundary_IsDetected (4 cases); OfficeLegacyScanTests.LegacyScan_CleanFile_IsClean
 - Status: Fixed
-- Commit: Phase 1 commit (`git log --grep "DT-001"`)
+- Commit: `26e10fa` (Phase 1 commit, shared with DT-001..DT-008)
 
 ### DT-009 — Zip bomb: no total budget, no ratio limit, CD read before count check, extraction unchecked
 - Severity: High
@@ -201,7 +201,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: New first pass `OfficePackageInspector` streams **every** entry through `BoundedReadStream`, which counts the bytes actually inflated and throws as soon as (a) a part exceeds `MaxPartSizeBytes`, (b) the package exceeds the new shared budget `FileSize.MaxTotalUncompressedBytes` (256 MB), or (c) a part larger than 1 MB exceeds a 100:1 compression ratio. `ZipPreflight` counts central-directory records with fixed-size reads (ZIP64 aware, same walk rule as `ZipArchive`) and rejects more than 5,000 before `ZipArchive` allocates entries. Corrupt deflate data fails closed. Text extraction runs the same pass before the SDK touches a part. Point (5), nested packages, is handled in DT-011.
 - Regression test: OfficeZipBombTests.ModernScan_HighlyCompressedPart_FailsClosed; OfficeZipBombTests.ModernScan_TotalDecompressedBudgetExceeded_FailsClosed; OfficeZipBombTests.ModernScan_TooManyEntries_FailsClosed; OfficeZipBombTests.ModernScan_CentralDirectoryLargerThanDeclared_FailsClosedWithoutThrowing; OfficeZipBombTests.TextExtraction_OversizedPart_FailsClosedBeforeDomLoad; OfficeZipBombTests.TextExtraction_HighlyCompressedPart_FailsClosed; OfficeZipBombTests.ModernScan_LargeOrdinaryDocument_IsClean (no false positive)
 - Status: Fixed
-- Commit: `git log --grep "DT-009"`
+- Commit: `84d6520`
 
 ### DT-010 — Macro detection relies on the part name `vbaProject.bin` only
 - Severity: High
@@ -212,7 +212,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: The first pass now flags (a) any content type in `[Content_Types].xml` containing `macroEnabled`, `vbaProject`, `vbaData` (VBA) or `macrosheet` (XLM, incl. `intlmacrosheet`); (b) relationships of type `…/vbaProject`, `…/vbaProjectSignature`, `…/wordVbaData`, `…/xlMacrosheet`, `…/xlIntlMacrosheet` in **every** `.rels` part (case-insensitive); (c) parts named `vbaProject.bin`, `vbaProjectSignature.bin`, `vbaData.xml` or located under `macrosheets/`. Content sniffing of renamed OLE/VBA blobs is added with DT-011.
 - Regression test: OfficeMacroDetectionTests (9 tests: literal name, renamed part via relationship, via content type, macro-enabled main type, vbaData by name and by relationship, XLM macro sheet by path, relationship and content type)
 - Status: Fixed
-- Commit: `git log --grep "DT-010"`
+- Commit: `a4a0105`
 
 ### DT-011 — Embedded payload detection: case-sensitive, incomplete list, no content sniffing, OLE/nested not inspected
 - Severity: High
@@ -223,7 +223,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: (1) Extension check applies to every part, case-insensitively, after trimming trailing dots/spaces (Windows ignores them). (2) The block-list now covers PE/driver types, installers (`.msi .msix .appx …`), scripts (`.cmd .wsc .ps1/.psm1 .sh …`), `.hta .sct .chm .jar .reg .inf .scf .lnk .url`, shell/search connectors, disk images (`.iso .img .vhd(x)`), `.cab`, `.xll` and all macro-enabled Office types. (3) Every part is classified by its first bytes: PE (`MZ`), ELF, Mach-O/fat/Java class, and Windows shortcut headers are rejected whatever the name. (4) Embedded OLE/CFB blobs (`oleObject*.bin`, embedded `.doc/.xls`) are scanned (ASCII + UTF-16LE) for VBA storages, OLE Package (`\u0001Ole10Native`) and Equation Editor (`Equation Native`) streams. (5) Embedded ZIP/OOXML parts are copied (bounded) and inspected recursively with the same rules and the shared budget, up to `FileSize.MaxNestedPackageDepth` (3); deeper nesting fails closed. The nested copy uses `PooledChunkReader`, not `Stream.CopyToAsync`, whose pooled buffer would go back to the shared pool uncleared.
 - Regression test: OfficeEmbeddedPayloadTests (24 cases: capitalised folder, payload outside embeddings, 13 newly blocked extensions incl. trailing dot, PE and ELF headers behind innocent names, OLE Package, Equation Editor, embedded legacy doc with VBA, nested macro-enabled package, payload in plain embedded ZIP, nesting depth, benign embedded workbook/OLE object stays clean)
 - Status: Fixed
-- Commit: `git log --grep "DT-011"`
+- Commit: `0b491d8`
 
 ### DT-012 — DDE detection gaps and fail-open `catch {}`
 - Severity: High
@@ -234,7 +234,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: New `OfficeXmlContentScanner` runs in the first pass over **every** XML part (decided by content type, extension or leading bytes, so a renamed part cannot hide markup). It rebuilds complex-field instructions across runs (`fldChar` begin/separate/end with nesting, `instrText`/`delInstrText`), reads `fldSimple/@instr`, and compares the field type case-insensitively against `DDE`/`DDEAUTO`. A field whose type is produced by a nested field (`QUOTE` character-code obfuscation) is flagged. Excel `ddeLink`/`oleLink` elements and formulas or defined names containing a DDE reference (`|` outside string literals and quoted sheet names) are flagged. Malformed XML or any DTD raises `XmlException` → not clean. The SDK-based `PartContainsDDE` and its `catch {}` were removed.
 - Regression test: OfficeDdeDetectionTests (16 cases: complex field, `fldSimple`, lowercase, split runs, nested QUOTE type, footnotes/endnotes/comments/glossary, Excel `ddeLink`, Excel DDE formula, malformed part, DOCTYPE in body, ordinary fields/formulas stay clean)
 - Status: Fixed
-- Commit: `git log --grep "DT-012"`
+- Commit: `f61b14b`
 
 ### DT-013 — Relationship analysis gaps and exponential traversal
 - Severity: High
@@ -245,7 +245,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: Relationship analysis moved into the single first pass, which parses each `.rels` part exactly once (no SDK recursion, no revisiting, so the exponential traversal is gone; the `SecurityException` depth guard is removed). Every relationship (not only `ExternalRelationships`) is checked: external `attachedTemplate`/`frame`/`subDocument` (remote templates/frames, CVE-2021-40444 class), external `oleObject`, UNC targets (`\\host\share`, `//host/share`), and any external scheme outside {http, https, mailto} — covering `ms-msdt:` (Follina), `search-ms:`, `ms-word:`, `file:`, `mhtml:`, `its:`, etc. PowerPoint `ppaction://program` and `ppaction://macro` actions are detected by the XML content scanner on `hlinkClick`/`hlinkHover`/`hlinkMouseOver`/`cNvPr`.
 - Regression test: OfficeRelationshipTests (12 cases: remote template/frame/subdocument, UNC hyperlink, 6 protocol-handler schemes, external OLE, ppaction run-program, heavily cross-referenced parts complete quickly, ordinary http/mailto/internal rels stay clean)
 - Status: Fixed
-- Commit: `git log --grep "DT-013"`
+- Commit: `c395deb`
 
 ### DT-014 — Every OOXML package is inspected as Word (Excel/PowerPoint branches dead)
 - Severity: Low
@@ -256,7 +256,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: The first pass parses `[Content_Types].xml` and `_rels/.rels` with a DTD-prohibiting reader (`SafeXml`), resolves the main part (root `officeDocument` relationship, transitional or strict) and its content type (Override, then Default), and derives the document kind. The scanner then opens only that SDK type; any failure is fail-closed. Packages without content types or root relationships, or with an unrecognised main content type, are rejected. Text extraction uses the same kind.
 - Regression test: OfficeModernScanTests.ModernScan_Workbook_IsInspectedAsExcel; OfficeModernScanTests.ModernScan_Presentation_IsInspectedAsPowerPoint; OfficeModernScanTests.ModernScan_UnrecognisedMainContentType_FailsClosed; OfficeModernScanTests.ModernScan_PlainZipWithoutContentTypes_FailsClosed; OfficeModernScanTests.TextExtraction_Workbook_ReturnsCellText; OfficeModernScanTests.TextExtraction_Presentation_ReturnsSlideText
 - Status: Fixed
-- Commit: `git log --grep "DT-014"`
+- Commit: `12b4262`
 
 ### DT-015 — Encrypted Office documents (legacy and CFB-wrapped OOXML) reported clean
 - Severity: High
@@ -267,7 +267,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: New bounded `CompoundFileInspector` (BCL only) parses the CFB header, FAT/DIFAT, directory and mini stream and reports `Encrypted` for: encrypted OOXML (`EncryptionInfo`/`EncryptedPackage` streams), Word `FibBase.fEncrypted`, an Excel `FILEPASS` record after `BOF`, and a PowerPoint `CurrentUserAtom.headerToken` of `0xE391C05F`. Every sector/directory chain uses a visited set and a hard iteration cap; any structural oddity yields `Unreadable` and the raw heuristic scan still runs. Encrypted files return `IsClean = false`, `IsEncrypted = true`, `IsScanned = false`. For non-seekable streams, and for OLE objects embedded in OOXML, the `EncryptedPackage`/`EncryptionInfo` stream names are matched by the keyword scanner (UTF-16LE). Follow-up: stream chains are read only up to the prefix that is inspected (16 bytes / 4 KB / 64 bytes) instead of being materialised whole. The loop guards were reviewed but deliberately not exercised with crafted cyclic files (see Residual risks).
 - Regression test: OfficeEncryptionTests (10 cases: password-protected OOXML on seekable and non-seekable streams; encrypted .doc/.xls/.ppt; unencrypted .doc/.xls/.ppt stay clean; embedded encrypted package inside a .docx). Fixtures are written by the test helper `CfbBuilder` (valid acyclic CFB v3). Follow-up: CompoundFileInspectorTests.Inspect_LargeWordStream_ReadsOnlyThePrefix; CompoundFileInspectorTests.Inspect_GarbageAfterMagic_IsUnreadableNotEncrypted.
 - Status: Fixed
-- Commit: `git log --grep "DT-015"`
+- Commit: `1ecb7e5`, `ba51033` (fix, then prefix-only follow-up)
 
 ### DT-016 — Office results echo `ex.Message` and ZIP entry names (disclosure, log injection)
 - Severity: Medium
@@ -278,7 +278,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: All Office result messages are now constant text: ZIP entry names are never echoed (oversized part, dangerous extension) and exception messages are no longer interpolated (structural failure, text extraction failure). The only remaining interpolations embed DocuTrust's own constant keyword/threat strings. Exceptions are still available to the caller as `InnerException` of `DocuTrustValidationException` for server-side logging.
 - Regression test: OfficeMessageSafetyTests.ModernScan_DangerousEntryNameWithLineBreaks_IsNotEchoed; OfficeMessageSafetyTests.ModernScan_OversizedEntryName_IsNotEchoed (both fail on the old code); OfficeMessageSafetyTests.ModernScan_StructuralFailure_DoesNotEchoExceptionText (guard: the packaging exception for this input happened not to contain the name, so it also passed before)
 - Status: Fixed
-- Commit: `git log --grep "DT-016"`
+- Commit: `3392825`
 
 ### DT-017 — Office `GetPageAsync` reports `IsClean = true` without scanning; swallows parse errors
 - Severity: Medium
@@ -289,7 +289,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: `GetPageAsync` now runs the complete scan (`ScanCoreAsync`, shared with `ScanFileContentAsync`) first and returns the scan verdict without text when the document is not clean, so `IsClean = true` from extraction always means scanned and clean. Inputs that are neither OLE/CFB nor OOXML are rejected instead of having bytes extracted as strings. OOXML text is streamed from the body parts with `SafeXml` (no DOM, no `InnerText`), in document order (`sheet`/`sldId` relationship ids), skipping non-worksheet sheets such as chartsheets instead of throwing. All `catch { }` blocks are gone: any parse error is fail-closed. Extraction is capped at `FileSize.MaxExtractedTextChars` (10 M chars) for OOXML and legacy files; exceeding it is fail-closed.
 - Regression test: OfficeTextExtractionTests (7 cases: macro-enabled document and legacy macro indicator are not clean and return no text, non-Office binary fails closed, clean document returns text, OOXML and legacy text caps fail closed, workbook with a chartsheet still extracts worksheet text)
 - Status: Fixed
-- Commit: `git log --grep "DT-017"`
+- Commit: `7e888d3`
 
 ### DT-018 — Scanners reuse one stream with `Position` resets (non-seekable streams crash)
 - Severity: Low
@@ -300,7 +300,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: Every pass opens a fresh stream with `IFormFile.OpenReadStream()` (the header read, the legacy scan, the ZIP pass, each OpenXML SDK attempt, each text-extraction attempt, and the PDF header/parse passes). No `Position` resets remain. The ZIP pass needs random access and now fails closed (`IsClean = false`, `IsScanned = false`) on a non-seekable stream instead of throwing. Streams opened by the scanners are disposed by the scanners; the caller-owned `IFormFile` is never disposed.
 - Regression test: OfficeModernScanTests.LegacyScan_NonSeekableStream_ReturnsVerdict; OfficeModernScanTests.ModernScan_NonSeekableStream_FailsClosedWithoutThrowing; OfficeModernScanTests.LegacyTextExtraction_NonSeekableStream_ReturnsText; DocuTrustPdfScannerTests.ScanFileContentAsync_NonSeekableStream_ReturnsVerdict
 - Status: Fixed
-- Commit: `git log --grep "DT-018"`
+- Commit: `89fb303`
 
 ### DT-019 — Undecryptable encrypted PDFs reported `IsClean = true`
 - Severity: High
@@ -311,7 +311,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: `PdfDocumentEncryptedException` now yields `IsClean = false`, `IsEncrypted = true`, `IsScanned = false` (consistent with encrypted Office files). PDFs that PdfPig can decrypt with an empty user password (owner-password-only, permissions-restricted) are still opened and scanned normally; see Breaking changes / Recommendations for rejecting those by policy.
 - Regression test: PdfEncryptionTests.ScanFileContentAsync_UndecryptablePdf_IsNotClean; PdfEncryptionTests.GetPageAsync_UndecryptablePdf_IsNotClean
 - Status: Fixed
-- Commit: `git log --grep "DT-019"`
+- Commit: `e28959e`
 
 ### DT-020 — PDF action chain: depth limit fails open; `/Next` arrays ignored
 - Severity: High
@@ -322,7 +322,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: `IsActionMalicious` is now iterative with an explicit stack and a visited set of indirect references. `/Next` is followed whether it is a single action or an array of actions. Exceeding `FileSize.MaxNestingDepth` or revisiting an object (a cycle) now returns malicious (fail closed) instead of `false`.
 - Regression test: PdfActionChainTests.Scan_JavaScriptInNextArray_IsDetected; PdfActionChainTests.Scan_JavaScriptBeyondDepthLimit_FailsClosed; PdfActionChainTests.Scan_CyclicActionChain_FailsClosedAndTerminates; PdfActionChainTests.Scan_ShortBenignActionChain_IsClean (no false positive)
 - Status: Fixed
-- Commit: `git log --grep "DT-020"`
+- Commit: `ec7e1ea`
 
 ### DT-021 — PDF objects that are streams with declared `/Length` > 25 MB are skipped
 - Severity: Medium
@@ -333,7 +333,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: `ResolveToDictionary` returns the stream dictionary whatever the declared `/Length` is. The skip saved nothing (PdfPig has already parsed the object when `GetObject` returns) and only made the object invisible to the checks.
 - Regression test: PdfOversizedObjectTests.Scan_ActionStoredAsStreamWithHugeDeclaredLength_IsDetected
 - Status: Fixed
-- Commit: `git log --grep "DT-021"`
+- Commit: `022c589`
 
 ### DT-022 — Missing PDF action types, annotation subtypes, form-field `/AA`, URI schemes
 - Severity: High
@@ -344,7 +344,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: New `PdfThreatRules.Inspect(DictionaryToken)` with case-insensitive name comparison and constant messages, applied to every action in the `/OpenAction` chain, every annotation (plus its `/A` chain) and every AcroForm field. Rules: keys `/JS` (also without `/S`), `/JavaScript`, `/AA`, `/XFA`, `/EmbeddedFiles`, `/EF`, `/RichMediaContent`, `/RichMediaSettings`; `/S` in {JavaScript, JS, Launch, GoToR, ImportData, GoToE, SubmitForm, Rendition, RichMediaExecute, Sound, Movie}; `/S /URI` whose target is not http/https/mailto/relative (`javascript:`, `file:`, `smb:`, drive letters, UNC `\\` or `//`; whitespace/control characters stripped first); `/Subtype` in {FileAttachment, RichMedia, Screen, Movie, Sound, 3D}; `/Type /EmbeddedFile`. AcroForm `/Fields` and their `/Kids` are walked iteratively with a visited set and limits (depth, 100 000 fields), so field `/AA` scripts are found without a widget.
 - Regression test: PdfActionCoverageTests (23 cases: 6 dangerous URI targets, 8 action types incl. case variants, /JS without /S, 5 annotation subtypes, field /AA without widget, kid field /A, ordinary links/mailto/fields stay clean)
 - Status: Fixed
-- Commit: `git log --grep "DT-022"`
+- Commit: `021fadc`
 
 ### DT-023 — PDF objects off the hard-coded paths are never inspected; no raw-byte defense in depth
 - Severity: Medium
@@ -355,7 +355,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: (1) New `PdfStructureWalker` visits every object reachable from the catalog (pages, annotations and their `/Popup`/`/Parent`, outlines, name trees, fields, optional content, objects in compressed object streams) and applies `PdfThreatRules` to each dictionary. It is iterative with a visited set, limits of 200 000 objects and 64 levels of inline nesting (exceeding either fails closed), skips subtrees that cannot carry actions (`/Contents`, `/Resources`, fonts, `/Metadata`, `/Thumb`, `/StructTreeRoot`), and treats a reference to an undefined object as null per ISO 32000-1 §7.3.10; any other parse error fails closed. It replaces the `GetPages()` loop, which also parsed every page content stream. (2) New `PdfRawScanner` runs before PdfPig: a byte-level tokenizer over the whole file (bounded by `MaxPdfSizeBytes` actual bytes) that decodes `#xx` escapes, compares names case-insensitively and skips stream bodies (KMP match for `endstream`). It flags `/JavaScript /JS /Launch /EmbeddedFile(s) /EF /FileAttachment /RichMedia* /XFA /AA /ImportData /GoToE /GoToR /SubmitForm /Rendition /Sound /Movie /Screen /3D`, so unreferenced objects and earlier incremental-update revisions are covered, and hostile files never reach the parser. `/OpenAction` is deliberately **not** a raw keyword: it is the normal "open at page/zoom" mechanism in benign PDFs (e.g. every hyperref/LaTeX file), and its target is validated structurally.
 - Regression test: PdfDeepInspectionTests.Scan_OutlineLaunchActionInObjectStream_IsDetectedStructurally; PdfDeepInspectionTests.Scan_AnnotationPopupWithJavaScriptInObjectStream_IsDetectedStructurally; PdfDeepInspectionTests.Scan_UnreferencedObjectWithEscapedJavaScript_IsDetectedByRawScan; PdfDeepInspectionTests.Scan_DanglingReferenceAndNamesInsideStreams_AreClean and Scan_CleanObjectStreamDocument_IsClean (no false positives)
 - Status: Fixed
-- Commit: `git log --grep "DT-023"`
+- Commit: `f00413e`
 
 ### DT-024 — `#xx`-escaped PDF names bypass structural checks
 - Severity: Info
@@ -366,7 +366,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: No code change for the structural path: PdfPig decodes `#xx` escapes while tokenising, so `/S /J#61vaScript` is seen as `JavaScript` (probe and regression test, which also passes on the pre-audit code). The new raw-byte scan (DT-023) decodes escapes itself, so escaped names are caught there too.
 - Regression test: PdfDeepInspectionTests.Scan_EscapedJavaScriptNameInObjectStream_IsDetectedStructurally (structural path); PdfDeepInspectionTests.Scan_UnreferencedObjectWithEscapedJavaScript_IsDetectedByRawScan (raw path)
 - Status: Not an issue
-- Commit: test added with DT-023 (`git log --grep "DT-023"`)
+- Commit: `f00413e` (regression tests added with DT-023; no code change)
 
 ### DT-025 — PDF `GetPageAsync` reports `IsClean = true` without a threat scan; file parsed 2–3 times
 - Severity: Medium
@@ -377,7 +377,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: Both public methods now go through one `ScanCoreAsync`: a single raw pass (size, `%PDF-` header and dangerous names; the header check is folded into the first 64 KB window), then exactly **one** `PdfDocument.Open`, the structural checks, and — for `GetPageAsync` only — text extraction from the same parsed document. A PDF that is not clean is returned as the scan verdict with no text, so `IsClean = true` from extraction always means scanned and clean. `CheckEncryptionAsync` (the extra parse) is gone, and the scan no longer calls `GetPages()` (which parsed every page content stream just to read annotations). `IsEncrypted` now reports `pdf.IsEncrypted` for PDFs PdfPig could decrypt (previously always `false`).
 - Regression test: PdfTextExtractionTests.GetPage_PdfWithJavaScript_IsNotCleanAndReturnsNoText; PdfTextExtractionTests.GetPage_ThreatOnlyVisibleStructurally_IsNotClean; PdfTextExtractionTests.GetPage_OpensTheUploadAtMostTwice (was 3 opens / 2 parses); PdfTextExtractionTests.GetPage_CleanPdf_ReturnsTextAndIsClean
 - Status: Fixed
-- Commit: `git log --grep "DT-025"`
+- Commit: `d69e0e4`
 
 ### DT-026 — No PDF page-count, glyph or extracted-text limits
 - Severity: Medium
@@ -388,7 +388,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: New `PdfScanLimits` (defaults in `FileSize`): whole-document extraction refuses PDFs with more than `MaxPdfPages` (5 000) pages; any extracted page with more than `MaxPdfLettersPerPage` (500 000) glyphs is refused before nearest-neighbour word extraction; total extracted text is capped at `MaxExtractedTextChars` (10 M chars). The structural walk is capped at `MaxPdfObjects` (200 000). All limits fail closed (`IsClean = false`, no text).
 - Regression test: PdfExtractionLimitTests.GetPage_AllPagesBeyondPageLimit_FailsClosed; PdfExtractionLimitTests.GetPage_PageBeyondGlyphLimit_FailsClosed (single page and all pages); PdfExtractionLimitTests.GetPage_TextBeyondCharacterLimit_FailsClosed (single page and all pages); PdfExtractionLimitTests.Scan_ObjectGraphBeyondLimit_FailsClosed; PdfExtractionLimitTests.GetPage_WithinDefaultLimits_IsClean
 - Status: Fixed
-- Commit: `git log --grep "DT-026"`
+- Commit: `902920a`
 
 ### DT-027 — PDF/ZIP polyglots not detected
 - Severity: Low
@@ -399,7 +399,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: The raw PDF scanner tracks the last four bytes outside stream bodies and flags a ZIP local-file header (`PK\x03\x04`) or end-of-central-directory record (`PK\x05\x06`) there. Inside stream bodies such bytes are treated as ordinary (often compressed) data, which keeps false positives low.
 - Regression test: PdfPolyglotTests.Scan_ZipAppendedAfterEof_IsDetected; PdfPolyglotTests.Scan_ZipSignatureInsideStreamBody_IsClean (no false positive)
 - Status: Fixed
-- Commit: `git log --grep "DT-027"`
+- Commit: `078afbf`
 
 ### DT-028 — PdfPig 0.1.14 has known infinite-recursion (stack overflow) bugs
 - Severity: High
@@ -410,7 +410,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: Upgraded `PdfPig` 0.1.14 → 0.1.16 in the library and the test project. 0.1.16 adds nullable annotations, so three `TryGet` call sites were adapted (no behaviour change). Not reproduced in-house (crafting a host-crashing PDF is out of scope); the guard is a version check on the resolved runtime assembly. Remaining stack-overflow risk in third-party parsers is documented under Residual risks.
 - Regression test: DependencyVersionTests.PdfPig_ResolvedVersion_IncludesRecursionFixes
 - Status: Fixed
-- Commit: `git log --grep "DT-028"`
+- Commit: `991843b`
 
 ### DT-029 — Empty `expectedExtension` makes `ValidateFileAsync` accept any type, including executables
 - Severity: High
@@ -421,7 +421,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: `ValidateFileAsync` now returns `IsValid = false` when `expectedExtension` is null, empty, whitespace or `.`, with message *an expected extension is required*. `ActualMimeType`/`ActualExtension` are still populated, so callers that used the empty value for detection keep the information. No signature change; behaviour change listed under Breaking changes.
 - Regression test: ValidatorTests.ValidateFileAsync_WithoutExpectedExtension_FailsClosed ("", null, whitespace, "."); ValidatorTests.ValidateFileAsync_WithoutExpectedExtension_StillReportsDetectedType
 - Status: Fixed
-- Commit: `git log --grep "DT-029"`
+- Commit: `145e0a8`
 
 ### DT-030 — Client filename extension ignored (double extensions, docs claim otherwise)
 - Severity: Medium
@@ -432,7 +432,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: After the magic bytes match, `ValidateFileAsync` checks `IFormFile.FileName`: only the last path segment is used (old browsers send full client paths); control characters (incl. NUL) and `:` (NTFS alternate data streams such as `evil.asp:.pdf`) are rejected; trailing dots/spaces are trimmed as Windows does; if an extension remains it must equal the expected one, case-insensitively, with alias groups (jpg/jpeg/jpe/jfif, tif/tiff, htm/html, mpg/mpeg). Names without an extension (e.g. `blob` from browser `FormData`) are accepted. Failure messages are constant (the name is not echoed). The path and stream APIs are unchanged (no client name).
 - Regression test: ValidatorTests.ValidateFileAsync_ClientNameClaimsAnotherType_IsInvalid (7 names: .html, .pdf.exe, trailing dot, trailing space+dot, ADS colon, NUL, CR/LF); ValidatorTests.ValidateFileAsync_AcceptableClientName_IsValid (5 names incl. upper case, double extension ending in .pdf, no extension, Windows full path); ValidatorTests.ValidateFileAsync_ExtensionAlias_IsValid
 - Status: Fixed
-- Commit: `git log --grep "DT-030"`
+- Commit: `ae5454c`
 
 ### DT-031 — Validator has no size limit before container (ZIP/OLE) parsing
 - Severity: Medium
@@ -443,7 +443,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: All four validator methods now call `OversizedContainer` before `DetermineFileFormat`: when the length (max of `IFormFile.Length` and the stream length, or the file length for paths) exceeds `FileSize.MaxFileSizeBytes` and the header is a ZIP (`PK`) or OLE/CFB signature, validation returns `IsValid = false` without parsing. The limit deliberately applies only to the container formats that FileSignatures parses with ZipArchive/OpenMcdf; other formats are identified from their header and keep working at any size (e.g. large media). The caller's stream position is preserved by the check.
 - Regression test: ValidatorTests.ValidateFileStreamAsync_OversizedZipContainer_IsRejectedBeforeParsing; ValidatorTests.ValidateFileAsync_OversizedOleContainer_IsRejectedBeforeParsing; ValidatorTests.ValidateFilePathAsync_OversizedZipContainer_IsRejectedBeforeParsing (sparse 200 MB file); ValidatorTests.ValidateFileStreamAsync_LargeNonContainer_IsStillValidated
 - Status: Fixed
-- Commit: `git log --grep "DT-031"`
+- Commit: `f5adb32`
 
 ### DT-032 — Validator leaves the caller's stream at a changed position
 - Severity: Low
@@ -454,7 +454,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: `ValidateFileStreamAsync` records the caller's position (seekable streams) and restores it in `finally`, on success, failure and exception. The stream is never disposed (verified: the inspector opens ZIP candidates with `leaveOpen`). Detection still inspects from offset 0, as before (documented behaviour: the whole stream is validated).
 - Regression test: ValidatorTests.ValidateFileStreamAsync_RestoresCallerPositionAndKeepsStreamOpen (positions 0, 7, 100)
 - Status: Fixed
-- Commit: `git log --grep "DT-032"`
+- Commit: `2fd76d8`
 
 ### DT-033 — Validator exceptions embed the client filename and full path
 - Severity: Low
@@ -465,7 +465,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: Exception messages are now constant: *Validation failed for the provided path.* / *...provided file.* / *...provided stream.*. The original exception stays available as `InnerException` for server-side logging. Note for consumers: BCL inner exceptions such as `FileNotFoundException` still contain the path, so log them, but do not return them to clients.
 - Regression test: ValidatorTests.ValidateFileAsync_Failure_DoesNotEchoClientFileName (CR/LF + marker in the name); ValidatorTests.ValidateFilePathAsync_Failure_DoesNotEchoPath; ValidatorTests.GetFileTypeAsync_Failure_DoesNotEchoPath
 - Status: Fixed
-- Commit: `git log --grep "DT-033"`
+- Commit: `a4c1e62`
 
 ### DT-034 — Path APIs block forever on FIFOs/devices; no regular-file checks
 - Severity: Medium
@@ -476,7 +476,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: `ValidateFilePathAsync` and `GetFileTypeAsync` now open paths through `OpenRegularFile`: symlinks are resolved to their final target; a missing target or a directory throws `DocuTrustValidationException` (unchanged behaviour, constant message); a zero-length target — which is what `stat` reports for FIFOs, character devices and most `/proc` entries — is rejected **before** `open(2)` with `IsValid = false`; after opening, a non-seekable stream is rejected. Symlinks to regular files keep working (k8s mounted secrets/config maps are symlinks). The trust boundary is documented in XML docs on `IDocuTrustFileValidator`: traversal and UNC (NTLM) are the caller's responsibility, symlinks are followed, FIFOs/devices are refused; `ValidateFileAsync` docs now state the expected extension is required and that validation is type identification, not content scanning. Residual TOCTOU (swap between `stat` and `open` by a local attacker) is listed under Residual risks.
 - Regression test: ValidatorPathTests.PathValidation_Fifo_ReturnsWithoutBlocking (ValidateFilePathAsync and GetFileTypeAsync); ValidatorPathTests.PathValidation_SymlinkToFifo_ReturnsWithoutBlocking; ValidatorPathTests.PathValidation_SymlinkToRegularFile_IsValidated; ValidatorPathTests.PathValidation_EmptyFile_IsInvalid; ValidatorPathTests.PathValidation_Directory_Throws
 - Status: Fixed
-- Commit: `git log --grep "DT-034"`
+- Commit: `60ce77f`
 
 ### DT-035 — Vulnerable `OpenMcdf 3.1.0` (uncatchable infinite loops) reachable from uploads
 - Severity: High
@@ -487,7 +487,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: Upgraded `FileSignatures` 7.0.0 → 7.3.0 (no API changes; 7.1 bumped OpenMcdf to 3.1.3 and 7.2.1 to 3.1.4). `dotnet list package --vulnerable --include-transitive` is now clean for the library. Not reproduced in-house: the guard is a version check on the resolved runtime assembly.
 - Regression test: DependencyVersionTests.OpenMcdf_ResolvedVersion_IncludesDirectoryCycleFixes; DependencyVersionTests.FileSignatures_ResolvedVersion_DependsOnPatchedOpenMcdf
 - Status: Fixed
-- Commit: `git log --grep "DT-035"`
+- Commit: `5ce7291`
 
 ### DT-036 — Vulnerable test-only transitive packages
 - Severity: Low
@@ -498,7 +498,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: Upgraded `xunit` 2.6.2 → 2.9.3 and `xunit.runner.visualstudio` 2.5.4 → 2.8.2. xunit 2.9.x ships a netstandard2.0 asset without the `NETStandard.Library 1.6.1` dependency, so the vulnerable 4.3.0 packages are no longer restored and no new packages were added. `Microsoft.NET.Test.Sdk` was left at 17.8.0 (not vulnerable).
 - Regression test: n/a at runtime (test tooling); enforced by the `dotnet list package --vulnerable` CI gate added for DT-038
 - Status: Fixed
-- Commit: `git log --grep "DT-036"`
+- Commit: `59e127e`
 
 ### DT-037 — `FileSize` constants use `int` arithmetic
 - Severity: Info
@@ -509,7 +509,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: All byte-size constants use `long` arithmetic (`100L * 1024 * 1024`, …); the new budget constants were written that way from the start. Values are unchanged. Not exploitable: as constant expressions an overflow would be a compile-time error (CS0220), never a silent runtime wrap.
 - Regression test: FileSizeTests.SizeLimits_HaveDocumentedValues; FileSizeTests.ByteLimits_AreDeclaredAsLong
 - Status: Fixed
-- Commit: `git log --grep "DT-037"`
+- Commit: `0b286d2`
 
 ### DT-038 — CI never runs tests (and cannot read `.slnx` with SDK 8)
 - Severity: Low
@@ -520,7 +520,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: Workflow updated locally (not pushed): `permissions: contents: read`; `actions/checkout@v4` and `actions/setup-dotnet@v4`; restore/build/test target the test project explicitly (SDK 8 cannot read `.slnx`); `dotnet test` runs in Release (with `TreatWarningsAsErrors`); a final step fails the job when `dotnet list package --vulnerable --include-transitive` reports anything for the library or the tests (this also guards DT-035/DT-036 regressions). Pinning actions to commit SHAs is left as a recommendation.
 - Regression test: n/a (CI configuration). Verified locally: YAML parses; restore, Release build (0 warnings), 223/223 tests and the vulnerable-package check all pass with the workflow's exact commands.
 - Status: Fixed
-- Commit: `git log --grep "DT-038"`
+- Commit: `5399160`
 
 ### DT-039 — No scan time limits
 - Severity: Medium
@@ -531,7 +531,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: New `ScanTimeLimit.RunAsync` wraps all four scanner entry points in a token linked to the caller's, with a wall-clock budget (`FileSize.DefaultScanTimeout` = 2 min, configurable through the internal `OfficeScanLimits`/`PdfScanLimits.ScanTimeout`). When the budget expires the result is `IsClean = false`, `IsScanned = false`, *Scan time limit exceeded.*; the caller's own cancellation still throws `OperationCanceledException`. All stream reads, XML loops, ZIP loops and object walks observe the token. Limitation: a single synchronous PdfPig or OpenXML SDK call cannot be interrupted mid-call (see Residual risks).
 - Regression test: ScanTimeoutTests.OfficeScan_BudgetExpired_FailsClosed; ScanTimeoutTests.PdfScan_BudgetExpired_FailsClosed; ScanTimeoutTests.SlowUpload_ExceedingBudget_FailsClosedInsteadOfHanging (300 ms budget vs ~13 s slow stream); ScanTimeoutTests.Scans_CallerCancellation_StillThrows; ScanTimeoutTests.Scans_WithinDefaultBudget_Complete
 - Status: Fixed
-- Commit: `git log --grep "DT-039"`
+- Commit: `77a718a`
 
 ### DT-040 — Content scanners are internal; public API only checks magic bytes
 - Severity: Info
@@ -542,7 +542,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: Not changed. Exposing the scanners is an API design decision (new public interface, options and result semantics) that the owner should make; it is additive and therefore non-breaking. Recommended shape: a public `IDocuTrustContentScanner` with `ScanAsync(IFormFile, CancellationToken)` returning `DocuTrustFileCheckResult`, registered by `AddDocuTrust`, plus a public options type for the limits in `FileSize`. Until then the README should state that `IDocuTrustFileValidator` identifies file types only. The XML docs of `ValidateFileAsync` now say so (DT-034).
 - Regression test: n/a
 - Status: Open – Recommendation
-- Commit: —
+- Commit: `4f947ad` (log entry only; no code change)
 
 ### DT-041 — XML parsing: DTD/XXE settings
 - Severity: Info
@@ -553,7 +553,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: No vulnerability at baseline: every reader DocuTrust created prohibited DTDs, and System.IO.Packaging / OpenXML SDK 3.x use `DtdProcessing.Prohibit` with no resolver on .NET 8, so no entity is ever resolved or expanded. (The *fail-open* handling of the resulting parse error was a real bug, fixed as DT-012.) All XML readers added during this audit go through `SafeXml.Create`: a fresh `XmlReaderSettings` per reader, `DtdProcessing.Prohibit`, `XmlResolver = null`, `MaxCharactersFromEntities = 0`. Any DTD is an `XmlException` and the part fails closed.
 - Regression test: XmlSafetyTests.SafeXml_RejectsDocumentTypeDefinitions; XmlSafetyTests.SafeXml_RejectsEntityExpansion; XmlSafetyTests.OfficeScan_ExternalEntityInAnyXmlPart_FailsClosedWithoutResolving (body, .rels and [Content_Types].xml; the entity targets a real temp file whose content is never read)
 - Status: Not an issue
-- Commit: `git log --grep "DT-041"` (tests only)
+- Commit: `2f30830` (tests only)
 
 ### DT-042 — Thread safety of shared instances (other than the pool)
 - Severity: Info
@@ -564,7 +564,7 @@ array. Every commit is local on `security/audit-2026-10`; **nothing was pushed**
 - Fix: No issue beyond the pool (fixed under DT-003/DT-005). After the audit the only static state is immutable lookup tables (`KeywordSet`s, extension/name sets, `PdfThreatRules` dictionaries, default limit objects with init-only properties); per-scan state (budgets, raw-scanner state, visited sets, buffers) is created per call; `XmlReaderSettings` is created per reader. `FileFormatInspector` holds only a `readonly` format list (checked by reflection).
 - Regression test: ConcurrencyTests.SharedInstances_ConcurrentMixedInputs_EachGetsCorrectVerdict (200 concurrent calls on single instances of both scanners and the validator, mixed clean/malicious inputs)
 - Status: Not an issue
-- Commit: `git log --grep "DT-042"` (test only)
+- Commit: `92f45b7` (test only)
 
 ---
 
