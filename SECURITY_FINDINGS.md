@@ -74,7 +74,7 @@ Empirical probes run before the fixes (scratch program, not committed):
 | DT-039 | No scan time limits | Medium | Fixed |
 | DT-040 | Content scanners are internal; public API only checks magic bytes | Info | Open |
 | DT-041 | XML parsing: DTD/XXE settings | Info | Not an issue |
-| DT-042 | Thread safety of shared instances (other than the pool) | Info | Open |
+| DT-042 | Thread safety of shared instances (other than the pool) | Info | Not an issue |
 
 ---
 
@@ -537,10 +537,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: DocuTrustOfficeScanner.cs:21 (`MaliciousExts`), DocuTrustFileScanner.cs:14 (`_inspector`)
 - Description: Reviewed all static/shared state. `MaliciousExts` is a static `HashSet` that is only read after type initialisation (safe for concurrent reads). `FileFormatInspector` holds a `readonly IEnumerable<FileFormat>` and no mutable state (verified by reflection), and `DocuTrustFileScanner` is registered scoped. The only shared mutable state is the custom pool (DT-003/DT-005).
 - Attack scenario / PoC: none.
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: No issue beyond the pool (fixed under DT-003/DT-005). After the audit the only static state is immutable lookup tables (`KeywordSet`s, extension/name sets, `PdfThreatRules` dictionaries, default limit objects with init-only properties); per-scan state (budgets, raw-scanner state, visited sets, buffers) is created per call; `XmlReaderSettings` is created per reader. `FileFormatInspector` holds only a `readonly` format list (checked by reflection).
+- Regression test: ConcurrencyTests.SharedInstances_ConcurrentMixedInputs_EachGetsCorrectVerdict (200 concurrent calls on single instances of both scanners and the validator, mixed clean/malicious inputs)
+- Status: Not an issue
+- Commit: `git log --grep "DT-042"` (test only)
 
 ---
 
