@@ -19,7 +19,7 @@
   </a>
 </p>
 
-<p align="center">▶ Click to watch with sound</p>
+
 
 ## What is DocuTrust.NET?
 
