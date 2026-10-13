@@ -51,7 +51,7 @@ Empirical probes run before the fixes (scratch program, not committed):
 | DT-016 | Office results echo `ex.Message` and ZIP entry names (disclosure, log injection) | Medium | Fixed |
 | DT-017 | Office `GetPageAsync` reports `IsClean = true` without scanning; swallows parse errors | Medium | Fixed |
 | DT-018 | Scanners reuse one stream with `Position` resets (non-seekable streams crash) | Low | Fixed |
-| DT-019 | Undecryptable encrypted PDFs reported `IsClean = true` | High | Open |
+| DT-019 | Undecryptable encrypted PDFs reported `IsClean = true` | High | Fixed |
 | DT-020 | PDF action chain: depth limit fails open; `/Next` arrays ignored | High | Open |
 | DT-021 | PDF objects that are streams with declared `/Length` > 25 MB are skipped | Medium | Open |
 | DT-022 | Missing PDF action types, annotation subtypes, form-field `/AA`, URI schemes | High | Open |
@@ -284,10 +284,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: src/DocuTrust/Core/Services/DocuTrustPdfScanner.cs:162-165 (`CheckEncryptionAsync`), :24-25, :80-81
 - Description: `PdfDocumentEncryptedException` produces `IsClean = true, IsEncrypted = true` and no content is scanned. `GetPageAsync` returns that result directly. Verified with a PDF carrying `/OpenAction` JavaScript and a `/Standard` handler with an unknown user password.
 - Attack scenario / PoC: encrypt a malicious PDF with a user password, send the password in the phishing lure → `IsClean = true`.
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: `PdfDocumentEncryptedException` now yields `IsClean = false`, `IsEncrypted = true`, `IsScanned = false` (consistent with encrypted Office files). PDFs that PdfPig can decrypt with an empty user password (owner-password-only, permissions-restricted) are still opened and scanned normally; see Breaking changes / Recommendations for rejecting those by policy.
+- Regression test: PdfEncryptionTests.ScanFileContentAsync_UndecryptablePdf_IsNotClean; PdfEncryptionTests.GetPageAsync_UndecryptablePdf_IsNotClean
+- Status: Fixed
+- Commit: `git log --grep "DT-019"`
 
 ### DT-020 — PDF action chain: depth limit fails open; `/Next` arrays ignored
 - Severity: High

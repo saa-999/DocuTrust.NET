@@ -164,7 +164,8 @@ internal class DocuTrustPdfScanner : IDocuTrustContentFile
         }
         catch (PdfDocumentEncryptedException)
         {
-            return new DocuTrustFileCheckResult { IsEncrypted = true, Message = "The PDF file is encrypted.", IsScanned = true, IsClean = true };
+            // The content could not be decrypted, so nothing was scanned: never report it clean.
+            return new DocuTrustFileCheckResult { IsEncrypted = true, Message = "The PDF file is encrypted and cannot be scanned.", IsScanned = false, IsClean = false };
         }
         catch (Exception)
         {
