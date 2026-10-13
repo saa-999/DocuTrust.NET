@@ -15,7 +15,7 @@
 
 <p align="center">
   <a href="assets/docutrust-promo.mp4">
-    <img src="assets/docutrust-preview.gif" alt="DocuTrust.NET promo — click to watch with sound" width="720">
+    <img src="assets/docutrust-preview.gif"  width="720">
   </a>
 </p>
 
