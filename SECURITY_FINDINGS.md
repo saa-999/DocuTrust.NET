@@ -66,7 +66,7 @@ Empirical probes run before the fixes (scratch program, not committed):
 | DT-031 | Validator has no size limit before container (ZIP/OLE) parsing | Medium | Fixed |
 | DT-032 | Validator leaves the caller's stream at a changed position | Low | Fixed |
 | DT-033 | Validator exceptions embed the client filename and full path | Low | Fixed |
-| DT-034 | Path APIs block forever on FIFOs/devices; no regular-file checks | Medium | Open |
+| DT-034 | Path APIs block forever on FIFOs/devices; no regular-file checks | Medium | Fixed |
 | DT-035 | Vulnerable `OpenMcdf 3.1.0` (uncatchable infinite loops) reachable from uploads | High | Fixed |
 | DT-036 | Vulnerable test-only transitive packages (`System.Net.Http`, `System.Text.RegularExpressions`) | Low | Fixed |
 | DT-037 | `FileSize` constants use `int` arithmetic | Info | Open |
@@ -449,10 +449,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: src/DocuTrust/Core/Services/DocuTrustFileScanner.cs:41 (`ValidateFilePathAsync`), :163 (`GetFileTypeAsync`)
 - Description: `new FileStream(path, …)` on a FIFO blocks in `open(2)` until a writer appears (thread-pool starvation); character devices (`/dev/tty`) block on read. Directories produce exceptions that include the path. Path traversal, symlinks and UNC paths (Windows: NTLM authentication to a remote host) are the caller's responsibility but are not documented.
 - Attack scenario / PoC: application validates a user-influenced path such as an upload staging name; a FIFO in that location hangs the request thread forever.
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: `ValidateFilePathAsync` and `GetFileTypeAsync` now open paths through `OpenRegularFile`: symlinks are resolved to their final target; a missing target or a directory throws `DocuTrustValidationException` (unchanged behaviour, constant message); a zero-length target — which is what `stat` reports for FIFOs, character devices and most `/proc` entries — is rejected **before** `open(2)` with `IsValid = false`; after opening, a non-seekable stream is rejected. Symlinks to regular files keep working (k8s mounted secrets/config maps are symlinks). The trust boundary is documented in XML docs on `IDocuTrustFileValidator`: traversal and UNC (NTLM) are the caller's responsibility, symlinks are followed, FIFOs/devices are refused; `ValidateFileAsync` docs now state the expected extension is required and that validation is type identification, not content scanning. Residual TOCTOU (swap between `stat` and `open` by a local attacker) is listed under Residual risks.
+- Regression test: ValidatorPathTests.PathValidation_Fifo_ReturnsWithoutBlocking (ValidateFilePathAsync and GetFileTypeAsync); ValidatorPathTests.PathValidation_SymlinkToFifo_ReturnsWithoutBlocking; ValidatorPathTests.PathValidation_SymlinkToRegularFile_IsValidated; ValidatorPathTests.PathValidation_EmptyFile_IsInvalid; ValidatorPathTests.PathValidation_Directory_Throws
+- Status: Fixed
+- Commit: `git log --grep "DT-034"`
 
 ### DT-035 — Vulnerable `OpenMcdf 3.1.0` (uncatchable infinite loops) reachable from uploads
 - Severity: High

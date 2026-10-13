@@ -39,7 +39,9 @@ public class DocuTrustFileScanner : IDocuTrustFileValidator
         try
         {
 
-            using var fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, false  );
+            using var fileStream = OpenRegularFile(filePath, out var notRegular);
+            if (fileStream == null)
+                return Task.FromResult(notRegular!);
             if (OversizedContainer(fileStream, fileStream.Length) is { } tooLarge)
                 return Task.FromResult(tooLarge);
             var format = _inspector.DetermineFileFormat(fileStream);
@@ -172,7 +174,9 @@ public class DocuTrustFileScanner : IDocuTrustFileValidator
         {
 
 
-            using var fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, false);
+            using var fileStream = OpenRegularFile(filePath, out var notRegular);
+            if (fileStream == null)
+                return Task.FromResult(notRegular!);
             if (OversizedContainer(fileStream, fileStream.Length) is { } tooLarge)
                 return Task.FromResult(tooLarge);
 
@@ -301,6 +305,39 @@ public class DocuTrustFileScanner : IDocuTrustFileValidator
 
                 );
         }
+    }
+
+    /// <summary>
+    /// Opens a path for inspection only if it resolves (through symlinks) to a non-empty regular file.
+    /// <c>open(2)</c> on a FIFO blocks until a writer appears and reads from character devices may block; .NET 8 has
+    /// no FIFO test, but <c>stat</c> reports size 0 for FIFOs, character devices and most <c>/proc</c> entries, so
+    /// such targets are refused before opening. Regular files are always seekable, which is re-checked after opening.
+    /// Missing files and directories throw (unchanged behaviour). Path traversal, symlink policy and UNC paths remain
+    /// the caller's responsibility (see <see cref="IDocuTrustFileValidator"/>).
+    /// </summary>
+    private static FileStream? OpenRegularFile(string filePath, out DocuTrustValidationResult? rejection)
+    {
+        rejection = null;
+        var info = new FileInfo(filePath);
+        var target = info.LinkTarget != null ? info.ResolveLinkTarget(returnFinalTarget: true) ?? info : info;
+        if (target is not FileInfo file || !file.Exists)
+            throw new FileNotFoundException("The file does not exist or is not a file.");
+
+        var notRegular = new DocuTrustValidationResult { IsValid = false, Message = "[DocuTrust] Validation failed: the path is empty or not a regular file." };
+        if (file.Length == 0)
+        {
+            rejection = notRegular;
+            return null;
+        }
+
+        var stream = new FileStream(file.FullName, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.None);
+        if (!stream.CanSeek)
+        {
+            stream.Dispose();
+            rejection = notRegular;
+            return null;
+        }
+        return stream;
     }
 
     private static readonly byte[] CompoundFileMagic = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
