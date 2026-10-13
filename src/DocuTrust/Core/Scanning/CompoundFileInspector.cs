@@ -82,13 +82,13 @@ internal static class CompoundFileInspector
             byte[]? data;
             if (size >= miniCutoff)
             {
-                data = ReadChain(stream, fat, entry.StartSector, sectorSize, fileLength);
+                data = ReadChain(stream, fat, entry.StartSector, sectorSize, fileLength, maxBytes);
             }
             else
             {
                 if (miniFat == null || miniStream.Value == null)
                     return null;
-                data = ReadMiniChain(miniStream.Value, miniFat, entry.StartSector, miniSectorSize);
+                data = ReadMiniChain(miniStream.Value, miniFat, entry.StartSector, miniSectorSize, maxBytes);
             }
 
             return data?.AsSpan(0, (int)Math.Min(Math.Min(size, data.Length), maxBytes)).ToArray();
@@ -194,12 +194,13 @@ internal static class CompoundFileInspector
         return miniFat;
     }
 
-    private static byte[]? ReadChain(Stream stream, uint[] fat, uint start, int sectorSize, long fileLength)
+    /// <summary>Follows a FAT chain. Stops once <paramref name="maxBytes"/> are collected (only a prefix is inspected).</summary>
+    private static byte[]? ReadChain(Stream stream, uint[] fat, uint start, int sectorSize, long fileLength, int maxBytes = int.MaxValue)
     {
         using var buffer = new MemoryStream();
         var visited = new HashSet<uint>();
         uint sector = start;
-        while (sector != EndOfChain && sector != FreeSector)
+        while (sector != EndOfChain && sector != FreeSector && buffer.Length < maxBytes)
         {
             if (sector >= fat.Length || !visited.Add(sector) || visited.Count > MaxSectors)
                 return null;
@@ -212,12 +213,12 @@ internal static class CompoundFileInspector
         return buffer.ToArray();
     }
 
-    private static byte[]? ReadMiniChain(byte[] miniStream, uint[] miniFat, uint start, int miniSectorSize)
+    private static byte[]? ReadMiniChain(byte[] miniStream, uint[] miniFat, uint start, int miniSectorSize, int maxBytes)
     {
         using var buffer = new MemoryStream();
         var visited = new HashSet<uint>();
         uint sector = start;
-        while (sector != EndOfChain && sector != FreeSector)
+        while (sector != EndOfChain && sector != FreeSector && buffer.Length < maxBytes)
         {
             long offset = (long)sector * miniSectorSize;
             if (sector >= miniFat.Length || offset + miniSectorSize > miniStream.Length || !visited.Add(sector) || visited.Count > MaxSectors)
