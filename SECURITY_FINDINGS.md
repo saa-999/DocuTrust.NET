@@ -69,7 +69,7 @@ Empirical probes run before the fixes (scratch program, not committed):
 | DT-034 | Path APIs block forever on FIFOs/devices; no regular-file checks | Medium | Fixed |
 | DT-035 | Vulnerable `OpenMcdf 3.1.0` (uncatchable infinite loops) reachable from uploads | High | Fixed |
 | DT-036 | Vulnerable test-only transitive packages (`System.Net.Http`, `System.Text.RegularExpressions`) | Low | Fixed |
-| DT-037 | `FileSize` constants use `int` arithmetic | Info | Open |
+| DT-037 | `FileSize` constants use `int` arithmetic | Info | Fixed |
 | DT-038 | CI never runs tests (and cannot read `.slnx` with SDK 8) | Low | Open |
 | DT-039 | No scan time limits | Medium | Fixed |
 | DT-040 | Content scanners are internal; public API only checks magic bytes | Info | Open |
@@ -482,10 +482,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: src/DocuTrust/Core/Constants/FileSize.cs:5-9
 - Description: `100 * 1024 * 1024` is evaluated as `int` before widening. Verified reasoning: these are constant expressions, so raising one past 2,047 MB is a **compile-time** error (CS0220), not a silent runtime overflow. Maintenance hazard only.
 - Attack scenario / PoC: none.
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: All byte-size constants use `long` arithmetic (`100L * 1024 * 1024`, …); the new budget constants were written that way from the start. Values are unchanged. Not exploitable: as constant expressions an overflow would be a compile-time error (CS0220), never a silent runtime wrap.
+- Regression test: FileSizeTests.SizeLimits_HaveDocumentedValues; FileSizeTests.ByteLimits_AreDeclaredAsLong
+- Status: Fixed
+- Commit: `git log --grep "DT-037"`
 
 ### DT-038 — CI never runs tests (and cannot read `.slnx` with SDK 8)
 - Severity: Low
