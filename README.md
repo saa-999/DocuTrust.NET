@@ -76,12 +76,6 @@ Full license details can be found in the `THIRD-PARTY-NOTICES.txt` file included
 
 
 
-## License
-
-DocuTrust.NET is licensed under the **DocuTrust Open Attribution License v1.0**. 
-Commercial use is permitted, provided that attribution is given:
-> Uses DocuTrust.NET by sa3od34ki@gmail.com
-
 ## Contact
 
 Developed by **Saud Saad Al-Rashidi**  
