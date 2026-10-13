@@ -40,8 +40,9 @@ internal sealed class OfficePackageInspector
     // Stream/storage names inside embedded OLE (CFB) objects. Matched as ASCII and UTF-16LE.
     private const string OleNativeStream = "\u0001Ole10Native";
     private const string EquationNativeStream = "Equation Native";
+    private const string EncryptedPackageStream = "EncryptedPackage";
     private static readonly KeywordSet OleIndicators = new(
-        ["_VBA_PROJECT", "VBAProject", "PROJECTwm", OleNativeStream, EquationNativeStream]);
+        ["_VBA_PROJECT", "VBAProject", "PROJECTwm", OleNativeStream, EquationNativeStream, EncryptedPackageStream]);
 
     private readonly ArrayPool<byte> _pool;
     private readonly OfficeScanLimits _limits;
@@ -218,6 +219,7 @@ internal sealed class OfficePackageInspector
             null => null,
             OleNativeStream => OlePackageMessage,
             EquationNativeStream => EquationMessage,
+            EncryptedPackageStream => "Embedded encrypted document (cannot be scanned) detected in package.",
             _ => VbaMessage,
         };
     }

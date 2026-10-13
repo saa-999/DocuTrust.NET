@@ -27,8 +27,21 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
         "VBAProject", "_VBA_PROJECT_CUR", "PROJECTwm",
         "AutoOpen", "AutoExec", "Document_Open", "Workbook_Open",
         "Execute", "Shell", "CreateObject", "WScript.Shell", "powershell.exe",
-        OleNativeStreamName
+        OleNativeStreamName,
+        EncryptedPackageStreamName, EncryptionInfoStreamName
     ]);
+
+    // Password-protected OOXML is a CFB holding these two streams; the content itself is ciphertext.
+    private const string EncryptedPackageStreamName = "EncryptedPackage";
+    private const string EncryptionInfoStreamName = "EncryptionInfo";
+
+    private static DocuTrustFileCheckResult EncryptedResult() => new()
+    {
+        IsClean = false,
+        IsEncrypted = true,
+        IsScanned = false,
+        Message = "Encrypted (password-protected) Office document: content cannot be scanned.",
+    };
 
     private readonly ArrayPool<byte> _bufferPool;
     private readonly OfficeScanLimits _limits;
@@ -98,6 +111,13 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
 
             if (header.AsSpan().SequenceEqual(new byte[] { 0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1 }))
             {
+                // Encryption flags of .doc/.xls/.ppt and encrypted OOXML need random access to the CFB structure.
+                using (var cfb = file.OpenReadStream())
+                {
+                    if (CompoundFileInspector.Inspect(cfb) == CompoundFileVerdict.Encrypted)
+                        return EncryptedResult();
+                }
+
                 using var stream = file.OpenReadStream();
                 return await ScanLegacyOfficeAsync(stream, token);
             }
@@ -233,6 +253,9 @@ internal class DocuTrustOfficeScanner : IDocuTrustContentFile
 
         if (read.LimitExceeded)
             return new DocuTrustFileCheckResult { IsClean = false, Message = "File exceeds security scan size limit.", IsScanned = true };
+
+        if (indicator is EncryptedPackageStreamName or EncryptionInfoStreamName)
+            return EncryptedResult();
 
         if (indicator == OleNativeStreamName)
             return new DocuTrustFileCheckResult { IsClean = false, Message = "Legacy file contains embedded OLE objects.", IsScanned = true };

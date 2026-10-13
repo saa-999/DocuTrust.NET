@@ -47,7 +47,7 @@ Empirical probes run before the fixes (scratch program, not committed):
 | DT-012 | DDE detection gaps and fail-open `catch {}` | High | Fixed |
 | DT-013 | Relationship analysis gaps and exponential traversal | High | Fixed |
 | DT-014 | Every OOXML package is inspected as Word (Excel/PowerPoint branches dead) | Low | Fixed |
-| DT-015 | Encrypted Office documents (legacy and CFB-wrapped OOXML) reported clean | High | Open |
+| DT-015 | Encrypted Office documents (legacy and CFB-wrapped OOXML) reported clean | High | Fixed |
 | DT-016 | Office results echo `ex.Message` and ZIP entry names (disclosure, log injection) | Medium | Open |
 | DT-017 | Office `GetPageAsync` reports `IsClean = true` without scanning; swallows parse errors | Medium | Open |
 | DT-018 | Scanners reuse one stream with `Position` resets (non-seekable streams crash) | Low | Fixed |
@@ -240,10 +240,10 @@ Empirical probes run before the fixes (scratch program, not committed):
 - Location: src/DocuTrust/Core/Services/DocuTrustOfficeScanner.cs:80-83, :272-327 (`ScanLegacyOfficeAsync`)
 - Description: Password-protected `.docx/.xlsx/.pptx` are CFB containers (`EncryptionInfo` + `EncryptedPackage`), so they take the legacy keyword path. Their content is ciphertext, no keyword matches, and the result is `IsClean = true`, `IsEncrypted = false`. RC4/CryptoAPI-encrypted `.doc` (`fEncrypted` FIB flag), `.xls` (`FILEPASS` record) and `.ppt` (`EncryptedSummary`) behave the same.
 - Attack scenario / PoC: password-protect a macro-enabled `.docm` and upload it; the victim is given the password in the lure → *"Legacy heuristics passed."*.
-- Fix: TBD
-- Regression test: TBD
-- Status: Open
-- Commit: —
+- Fix: New bounded `CompoundFileInspector` (BCL only) parses the CFB header, FAT/DIFAT, directory and mini stream and reports `Encrypted` for: encrypted OOXML (`EncryptionInfo`/`EncryptedPackage` streams), Word `FibBase.fEncrypted`, an Excel `FILEPASS` record after `BOF`, and a PowerPoint `CurrentUserAtom.headerToken` of `0xE391C05F`. Every sector/directory chain uses a visited set and a hard iteration cap; any structural oddity yields `Unreadable` and the raw heuristic scan still runs. Encrypted files return `IsClean = false`, `IsEncrypted = true`, `IsScanned = false`. For non-seekable streams, and for OLE objects embedded in OOXML, the `EncryptedPackage`/`EncryptionInfo` stream names are matched by the keyword scanner (UTF-16LE). The loop guards were reviewed but deliberately not exercised with crafted cyclic files (see Residual risks).
+- Regression test: OfficeEncryptionTests (10 cases: password-protected OOXML on seekable and non-seekable streams; encrypted .doc/.xls/.ppt; unencrypted .doc/.xls/.ppt stay clean; embedded encrypted package inside a .docx). Fixtures are written by the test helper `CfbBuilder` (valid acyclic CFB v3).
+- Status: Fixed
+- Commit: `git log --grep "DT-015"`
 
 ### DT-016 — Office results echo `ex.Message` and ZIP entry names (disclosure, log injection)
 - Severity: Medium
